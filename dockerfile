@@ -10,6 +10,12 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     python3-colcon-common-extensions \
     ros-humble-ament-cmake \
+    ros-humble-ament-cmake-core \
+    ros-humble-ament-package \
+    ros-humble-ament-cmake-ros \
+    ros-humble-ament-cmake-export-dependencies \
+    ros-humble-ament-cmake-libraries \
+    ros-humble-ament-cmake-target-dependencies \
     ros-humble-foxglove-bridge \
     ros-humble-vision-opencv \
     ros-humble-cv-bridge \
