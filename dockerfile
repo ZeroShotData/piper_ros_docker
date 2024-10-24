@@ -1,4 +1,4 @@
-# Dockerfile for AgileX Robotic Arm with ROS 2 Humble on ARM64
+# Dockerfile for AgileX Robotic Arm with ROS 2 Humble on AMD64
 
 FROM ros:humble
 
@@ -35,14 +35,17 @@ RUN rosdep update
 RUN mkdir -p /root/ros2_ws/src
 WORKDIR /root/ros2_ws
 
-# Copy the repository contents into the workspace
-COPY . src/piper_ros/
+# Copy only the 'src' directory into the workspace
+COPY src ./src
 
-# Copy CAN configuration scripts to root for easy access
+# Copy CAN configuration scripts to root
 COPY can_activate.sh /root/
 COPY can_config.sh /root/
 COPY find_all_can_port.sh /root/
 RUN chmod +x /root/*.sh
+
+# Copy supervisord configuration
+COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
 # Install package dependencies
 RUN rosdep install --from-paths src --ignore-src -r -y
@@ -59,9 +62,6 @@ RUN echo 'root:1234' | chpasswd && \
 
 # Expose ports
 EXPOSE 2222 8765
-
-# Copy supervisord configuration
-COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
 # Configure Git and SSH for GitHub
 ENV GIT_USER_NAME="JulienRineau"
