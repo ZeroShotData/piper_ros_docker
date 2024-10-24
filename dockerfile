@@ -1,6 +1,7 @@
 # Dockerfile for AgileX Robotic Arm with ROS 2 Humble on AMD64
 
-FROM ros:humble
+# Use ROS 2 Humble base image that includes development tools
+FROM ros:humble-ros-base
 
 # Install necessary system dependencies
 RUN apt-get update && apt-get install -y \
@@ -8,6 +9,7 @@ RUN apt-get update && apt-get install -y \
     git \
     build-essential \
     python3-colcon-common-extensions \
+    ros-humble-ament-cmake \
     ros-humble-foxglove-bridge \
     ros-humble-vision-opencv \
     ros-humble-cv-bridge \
