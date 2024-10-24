@@ -35,14 +35,14 @@ RUN rosdep update
 RUN mkdir -p /root/ros2_ws/src
 WORKDIR /root/ros2_ws
 
-# Copy CAN configuration scripts
+# Copy the repository contents into the workspace
+COPY . src/piper_ros/
+
+# Copy CAN configuration scripts to root for easy access
 COPY can_activate.sh /root/
 COPY can_config.sh /root/
 COPY find_all_can_port.sh /root/
 RUN chmod +x /root/*.sh
-
-# Clone the AgileX Robotic Arm ROS 2 packages
-RUN git clone -b ros-humble-no-aloha https://github.com/ZeroShotData/piper_ros_docker.git src/piper_ros
 
 # Install package dependencies
 RUN rosdep install --from-paths src --ignore-src -r -y
