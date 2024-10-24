@@ -19,8 +19,8 @@ RUN apt-get update && apt-get install -y \
 # Install Python packages
 RUN pip3 install python-can piper_sdk
 
-# Initialize rosdep
-RUN rosdep init && rosdep update
+# Update rosdep (init is already done in base image)
+RUN rosdep update
 
 # Create ROS 2 workspace
 RUN mkdir -p /root/ros2_ws/src
