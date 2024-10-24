@@ -1,6 +1,6 @@
 # Dockerfile for AgileX Robotic Arm with ROS 2 Humble on ARM64 including foxglove_bridge and additional dependencies
 
-FROM arm64v8/ros:humble-ros-base-jammy
+FROM ros:humble
 
 # Install necessary system dependencies
 RUN apt-get update && apt-get install -y \
