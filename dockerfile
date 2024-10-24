@@ -1,4 +1,4 @@
-# Dockerfile for AgileX Robotic Arm with ROS 2 Humble on ARM64 including foxglove_bridge and additional dependencies
+# Dockerfile for AgileX Robotic Arm with ROS 2 Humble on ARM64
 
 FROM ros:humble
 
@@ -13,11 +13,20 @@ RUN apt-get update && apt-get install -y \
     ros-humble-cv-bridge \
     ros-humble-image-geometry \
     ros-humble-topic-tools \
+    ros-humble-ros2-control \
+    ros-humble-ros2-controllers \
+    ros-humble-controller-manager \
+    ros-humble-joint-state-publisher-gui \
+    ros-humble-robot-state-publisher \
+    ros-humble-xacro \
     supervisor \
-    openssh-server
+    openssh-server \
+    ethtool \
+    can-utils \
+    net-tools
 
 # Install Python packages
-RUN pip3 install python-can piper_sdk
+RUN pip3 install python-can piper_sdk scipy
 
 # Update rosdep (init is already done in base image)
 RUN rosdep update
@@ -26,10 +35,14 @@ RUN rosdep update
 RUN mkdir -p /root/ros2_ws/src
 WORKDIR /root/ros2_ws
 
-# Clone the AgileX Robotic Arm ROS 2 packages (update URLs as needed)
-RUN git clone https://github.com/agilexrobotics/piper_ros2.git src/piper_ros2
-RUN git clone https://github.com/agilexrobotics/piper_description_ros2.git src/piper_description_ros2
-RUN git clone https://github.com/agilexrobotics/piper_msgs_ros2.git src/piper_msgs_ros2
+# Copy CAN configuration scripts
+COPY can_activate.sh /root/
+COPY can_config.sh /root/
+COPY find_all_can_port.sh /root/
+RUN chmod +x /root/*.sh
+
+# Clone the AgileX Robotic Arm ROS 2 packages
+RUN git clone -b ros-humble-no-aloha https://github.com/ZeroShotData/piper_ros_docker.git src/piper_ros
 
 # Install package dependencies
 RUN rosdep install --from-paths src --ignore-src -r -y
@@ -44,8 +57,8 @@ RUN echo 'root:1234' | chpasswd && \
     sed -i 's/Port 22/Port 2222/' /etc/ssh/sshd_config && \
     mkdir -p /var/run/sshd
 
-# Expose SSH port
-EXPOSE 2222
+# Expose ports
+EXPOSE 2222 8765
 
 # Copy supervisord configuration
 COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
@@ -58,8 +71,11 @@ RUN git config --global user.name "$GIT_USER_NAME" && \
     mkdir -p /root/.ssh && \
     ssh-keyscan github.com >> /root/.ssh/known_hosts
 
-# Source the ROS 2 setup scripts
+# Source the ROS 2 setup scripts and add useful aliases
 RUN echo "source /opt/ros/humble/setup.bash" >> ~/.bashrc && \
-    echo "source /root/ros2_ws/install/setup.bash" >> ~/.bashrc
+    echo "source /root/ros2_ws/install/setup.bash" >> ~/.bashrc && \
+    echo "alias activate_can='bash /root/can_activate.sh can0 1000000'" >> ~/.bashrc && \
+    echo "alias start_piper='ros2 launch piper start_single_piper.launch.py'" >> ~/.bashrc && \
+    echo "alias start_piper_rviz='ros2 launch piper start_single_piper_rviz.launch.py'" >> ~/.bashrc
 
 CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
