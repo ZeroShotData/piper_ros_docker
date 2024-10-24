@@ -1,0 +1,21 @@
+version: '3.8'
+services:
+  puppet_os_arm64:
+    image: piper:amd64
+    # network_mode: "host"
+    platform: linux/amd64
+    container_name: piper
+    environment:
+      - ROS_DOMAIN_ID=0
+      - ROS_LOCALHOST_ONLY=0
+      - ROS_NAMESPACE=${PUPPET_ID}
+    volumes:
+      - ~/.ssh:/root/.ssh:ro
+    privileged: true
+    devices:
+      - ${I2C_DEVICE:-/dev/null}:/dev/i2c-1
+    restart: unless-stopped
+    ports:
+      - "8765:8765"
+      - "2222:22"
+      - "1883:1883"
