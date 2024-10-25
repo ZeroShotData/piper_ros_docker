@@ -62,11 +62,11 @@ RUN /bin/bash -c "source /opt/ros/humble/setup.bash && rosdep install --from-pat
 # Build the workspace
 RUN /bin/bash -c "source /opt/ros/humble/setup.bash && colcon build"
 
-# Configure SSH on port 2222
+# Configure SSH on port 2222 (modify this section)
 RUN echo 'root:1234' | chpasswd && \
-    sed -i 's/#Port 22/Port 2222/' /etc/ssh/sshd_config && \
     sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config && \
     sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
+    sed -i 's/#Port 22/Port 2222/' /etc/ssh/sshd_config && \
     mkdir -p /var/run/sshd
 
 # Expose ports
