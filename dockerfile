@@ -41,17 +41,17 @@ RUN pip3 install python-can piper_sdk scipy
 RUN rosdep update
 
 # Create ROS 2 workspace
-RUN mkdir -p /root/ros2_ws/src
-WORKDIR /root/ros2_ws
+RUN mkdir -p /app/ros2_ws/src
+WORKDIR /app
 
 # Copy only the 'src' directory into the workspace
-COPY src ./src
+COPY src ./ros2_ws/src
 
-# Copy CAN configuration scripts to root
-COPY can_activate.sh /root/
-COPY can_config.sh /root/
-COPY find_all_can_port.sh /root/
-RUN chmod +x /root/*.sh
+# Copy CAN configuration scripts
+COPY can_activate.sh ./
+COPY can_config.sh ./
+COPY find_all_can_port.sh ./
+RUN chmod +x ./*.sh
 
 # Copy supervisord configuration
 COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
@@ -82,8 +82,8 @@ RUN git config --global user.name "$GIT_USER_NAME" && \
 
 # Source the ROS 2 setup scripts and add useful aliases
 RUN echo "source /opt/ros/humble/setup.bash" >> ~/.bashrc && \
-    echo "source /root/ros2_ws/install/setup.bash" >> ~/.bashrc && \
-    echo "alias activate_can='bash /root/can_activate.sh can0 1000000'" >> ~/.bashrc && \
+    echo "source /app/ros2_ws/install/setup.bash" >> ~/.bashrc && \
+    echo "alias activate_can='bash /app/can_activate.sh can0 1000000'" >> ~/.bashrc && \
     echo "alias start_piper='ros2 launch piper start_single_piper.launch.py'" >> ~/.bashrc && \
     echo "alias start_piper_rviz='ros2 launch piper start_single_piper_rviz.launch.py'" >> ~/.bashrc
 
