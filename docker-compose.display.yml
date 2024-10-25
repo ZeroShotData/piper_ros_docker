@@ -14,7 +14,7 @@ services:
       - ~/.ssh:/root/.ssh:ro
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
       - /sys/class/net:/sys/class/net:rw  # Add CAN interface access
-      - /sys/devices/pci0000:00:/sys/devices/pci0000:00:rw  # For USB devices
+      - /sys/devices:/sys/devices:rw       # Modified this line for USB/PCI devices
     privileged: true
     network_mode: "host"  # Important for CAN interfaces
     cap_add:
