@@ -1,0 +1,22 @@
+version: '3.8'
+services:
+  puppet_os_arm64:
+    image: piper:amd64
+    platform: linux/amd64
+    container_name: piper
+    environment:
+      - ROS_DOMAIN_ID=0
+      - ROS_LOCALHOST_ONLY=0
+      - ROS_NAMESPACE=${PUPPET_ID}
+      - DISPLAY=${DISPLAY}               # Pass the DISPLAY variable
+    volumes:
+      - ~/.ssh:/root/.ssh:ro
+      - /tmp/.X11-unix:/tmp/.X11-unix    # Mount the X11 socket
+    privileged: true
+    devices:
+      - ${I2C_DEVICE:-/dev/null}:/dev/i2c-1
+    restart: unless-stopped
+    ports:
+      - "8765:8765"
+      - "2222:22"
+      - "1883:1883"
