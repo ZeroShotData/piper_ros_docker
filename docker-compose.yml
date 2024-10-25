@@ -1,7 +1,7 @@
 version: '3.8'
 services:
   puppet_os_arm64:
-    image: piper:amd64
+    image: piper:humble-amd64 
     # network_mode: "host"
     platform: linux/amd64
     container_name: piper
