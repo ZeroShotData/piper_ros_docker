@@ -15,6 +15,9 @@ services:
     privileged: true
     devices:
       - ${I2C_DEVICE:-/dev/null}:/dev/i2c-1
+      - /dev/bus/usb:/dev/bus/usb    # Add USB passthrough
+      - /dev/ttyUSB0:/dev/ttyUSB0    # For specific USB serial devices
+      - /dev/ttyACM0:/dev/ttyACM0    # For specific USB ACM devices
     restart: unless-stopped
     ports:
       - "8765:8765"
