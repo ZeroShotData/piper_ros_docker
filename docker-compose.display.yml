@@ -26,5 +26,5 @@ services:
       - /dev/dri:/dev/dri
     restart: unless-stopped
     ports:
-      - "8765:8765"  # Foxglove
-      - "2222:2222"    # SSH
+      - "127.0.0.1:8765:8765"  # Foxglove
+      - "127.0.0.1:2222:2222"    # SSH
