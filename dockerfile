@@ -31,6 +31,7 @@ RUN apt-get update && apt-get install -y \
     openssh-server \
     ethtool \
     can-utils \
+    iproute2 \
     net-tools
 
 # Install Python packages
