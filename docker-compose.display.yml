@@ -13,12 +13,17 @@ services:
     volumes:
       - ~/.ssh:/root/.ssh:ro
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - /sys/class/net:/sys/class/net:rw  # Add CAN interface access
+      - /sys/devices/pci0000:00:/sys/devices/pci0000:00:rw  # For USB devices
     privileged: true
+    network_mode: "host"  # Important for CAN interfaces
+    cap_add:
+      - NET_ADMIN  # Required for CAN interface configuration
     devices:
       - /dev/bus/usb:/dev/bus/usb
       - /dev/ttyUSB0:/dev/ttyUSB0
       - /dev/ttyACM0:/dev/ttyACM0
-      - /dev/dri:/dev/dri  # For hardware acceleration
+      - /dev/dri:/dev/dri
     restart: unless-stopped
     ports:
       - "8765:8765"  # Foxglove
