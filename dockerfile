@@ -57,10 +57,10 @@ RUN chmod +x ./*.sh
 COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
 # Install package dependencies
-RUN /bin/bash -c "source /opt/ros/humble/setup.bash && rosdep install --from-paths src --ignore-src -r -y"
+RUN /bin/bash -c "source /opt/ros/humble/setup.bash && cd /app/ros2_ws && rosdep install --from-paths src --ignore-src -r -y"
 
 # Build the workspace
-RUN /bin/bash -c "source /opt/ros/humble/setup.bash && colcon build"
+RUN /bin/bash -c "source /opt/ros/humble/setup.bash && cd /app/ros2_ws && colcon build"
 
 # Configure SSH on port 2222 (modify this section)
 RUN echo 'root:1234' | chpasswd && \
