@@ -40,29 +40,31 @@ RUN pip3 install python-can piper_sdk scipy
 # Update rosdep (init is already done in base image)
 RUN rosdep update
 
-# Create ROS 2 workspace
-RUN mkdir -p /app/ros2_ws/src
+# Set working directory
 WORKDIR /app
 
-# Copy only the 'src' directory into the workspace
-COPY src ./ros2_ws/src
+# Copy the entire repository into /app
+COPY . /app
 
-# Copy CAN configuration scripts
-COPY can_activate.sh ./
-COPY can_config.sh ./
-COPY find_all_can_port.sh ./
-RUN chmod +x ./*.sh
+# Set up environment
+RUN echo "source /opt/ros/humble/setup.bash" >> ~/.bashrc && \
+    echo "source /opt/ros/humble/setup.bash" >> /root/.bashrc && \
+    echo "source /usr/share/colcon_cd/function/colcon_cd.sh" >> ~/.bashrc && \
+    echo "export _colcon_cd_root=/opt/ros/humble/" >> ~/.bashrc && \
+    mkdir -p /app/tmp && \
+    chmod -R 755 /app/tmp
 
-# Copy supervisord configuration
-COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+# Install package dependencies and build the workspace
+RUN bash -c '\
+    source /opt/ros/humble/setup.bash && \
+    cd /app/ros2_ws && \
+    rosdep update --rosdistro humble && \
+    rosdep install --from-paths src --ignore-src -r -y \
+    --skip-keys="libpaho-mqtt-dev libpaho-mqttpp-dev" && \
+    colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release \
+'
 
-# Install package dependencies
-RUN /bin/bash -c "source /opt/ros/humble/setup.bash && cd /app/ros2_ws && rosdep install --from-paths src --ignore-src -r -y"
-
-# Build the workspace
-RUN /bin/bash -c "source /opt/ros/humble/setup.bash && cd /app/ros2_ws && colcon build"
-
-# Configure SSH on port 2222 (modify this section)
+# Configure SSH on port 2222
 RUN echo 'root:1234' | chpasswd && \
     sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config && \
     sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
@@ -87,4 +89,5 @@ RUN echo "source /opt/ros/humble/setup.bash" >> ~/.bashrc && \
     echo "alias start_piper='ros2 launch piper start_single_piper.launch.py'" >> ~/.bashrc && \
     echo "alias start_piper_rviz='ros2 launch piper start_single_piper_rviz.launch.py'" >> ~/.bashrc
 
+# Start supervisord when the container starts
 CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
