@@ -84,7 +84,7 @@ RUN bash -c '\
     cd /app/ros2_ws && \
     rosdep update --rosdistro humble && \
     rosdep install --from-paths src --ignore-src -r -y \
-    --skip-keys="libpaho-mqtt-dev libpaho-mqttpp-dev" && \
+    --skip-keys="libpaho-mqtt-dev libpaho-mqttpp-dev warehouse_ros_mongo ros-humble-warehouse-ros-mongo" && \
     colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release \
 '
 
