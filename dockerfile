@@ -113,5 +113,7 @@ RUN echo "source /opt/ros/humble/setup.bash" >> ~/.bashrc && \
     echo "alias start_piper='ros2 launch piper start_single_piper.launch.py'" >> ~/.bashrc && \
     echo "alias start_piper_rviz='ros2 launch piper start_single_piper_rviz.launch.py'" >> ~/.bashrc
 
+RUN mv /app/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+
 # Start supervisord when the container starts
 CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
