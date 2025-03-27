@@ -8,9 +8,22 @@
 |---|---|
 |![ros](https://img.shields.io/badge/ROS-noetic-blue.svg)|![Pass](https://img.shields.io/badge/Pass-blue.svg)|
 
-## 安装方法
+## 0 注意URDF版本
 
-### 安装依赖
+S-V1.6-3固件版本以前的DH参数为各关节接触限位处为初始坐标得到
+
+S-V1.6-3固件版本以后的DH参数将j2和j3的坐标系偏移了2度
+
+现默认URDF为后者
+
+|firmware version |urdf|
+|---|---|
+|current version < S-V1.6-3|`piper_description_old.urdf`|
+|current version >= S-V1.6-3|`piper_description.urdf`|
+
+## 1 安装方法
+
+### 1.1 安装依赖
 
 ```shell
 pip3 install python-can
@@ -20,15 +33,23 @@ pip3 install python-can
 pip3 install piper_sdk
 ```
 
-## 快速使用
+```shell
+source /opt/ros/noetic/setup.bash
+sudo apt install python3-wstool python3-catkin-tools python3-rosdep ros-noetic-ruckig
+sudo apt-get install ros-noetic-eigen-stl-containers ros-noetic-geometric-shapes ros-noetic-pybind11-catkin
+sudo apt-get install ros-noetic-moveit-resources-panda-moveit-config ros-noetic-ompl ros-noetic-warehouse-ros ros-noetic-eigenpy ros-noetic-rosparam-shortcuts
+sudo apt install ros-noetic-moveit-msgs ros-noetic-srdfdom
+```
 
-### 使能can模块
+## 2 快速使用
+
+### 2.1 使能can模块
 
 首先需要设置好shell脚本参数
 
-#### 单条机械臂
+#### 2.1.1 单条机械臂
 
-##### pc只插入一个usb转can模块
+##### 1）pc只插入一个usb转can模块
 
 - **此处使用`can_activate.sh`脚本**
 
@@ -38,7 +59,7 @@ pip3 install piper_sdk
 bash can_activate.sh can0 1000000
 ```
 
-##### pc插入多个usb转can模块
+##### 2）pc插入多个usb转can模块
 
 - **此处使用`can_activate.sh`脚本**
 
@@ -62,13 +83,13 @@ ps:**一般第一个插入的can模块会默认是can0，如果没有查询到ca
 bash can_activate.sh can_piper 1000000 "1-2:1.0"
 ```
 
-ps:**此处的意思是，1-2:1.0硬件编码的usb端口插入的can设备，名字被重命名为can_piper，波特率为1000000，并激活**
+ps:**此处的意思是，1-2:1.0硬件编码的usb端口插入的can设备，名字被重命名为can_piper,波特率为1000000，并激活**
 
 然后执行`ifconfig`查看是否有`can_piper`，如果有则can模块设置成功
 
-### 运行节点
+### 2.2 运行节点
 
-#### 单个机械臂
+#### 2.2.1 单机械臂
 
 节点名`piper_ctrl_single_node.py`
 
@@ -85,53 +106,58 @@ rviz_ctrl_flag:是否使用rviz来发送关节角消息，True则接收rviz发�
 #由于rviz中的joint7范围是[0,0.04]，而真实夹爪行程为0.08m，打开rviz控制后会将rviz发出的joint7乘2倍
 ```
 
-`start_single_piper_rviz.launch`如下:
-
-```xml
-<launch>
-  <arg name="can_port" default="can0" />
-  <arg name="auto_enable" default="true" />
-  <include file="$(find piper_description)/launch/display_xacro.launch"/>
-  <!-- 启动机械臂节点 -->
-  <node name="piper_ctrl_single_node" pkg="piper" type="piper_ctrl_single_node.py" output="screen">
-    <param name="can_port" value="$(arg can_port)" />
-    <param name="auto_enable" value="$(arg auto_enable)" />
-    <param name="rviz_ctrl_flag" value="true" />
-    <param name="girpper_exist" value="true" />
-    <remap from="joint_ctrl_single" to="/joint_states" />
-  </node>
-</launch>
-```
-
 `start_single_piper.launch`如下:
 
 ```xml
 <launch>
   <arg name="can_port" default="can0" />
   <arg name="auto_enable" default="true" />
+  <arg name="gripper_val_mutiple" default="1" />
   <!-- <include file="$(find piper_description)/launch/display_xacro.launch"/> -->
   <!-- 启动机械臂节点 -->
   <node name="piper_ctrl_single_node" pkg="piper" type="piper_ctrl_single_node.py" output="screen">
     <param name="can_port" value="$(arg can_port)" />
     <param name="auto_enable" value="$(arg auto_enable)" />
-    <param name="rviz_ctrl_flag" value="true" />
+    <param name="gripper_val_mutiple" value="$(arg gripper_val_mutiple)" />
+    <!-- <param name="rviz_ctrl_flag" value="true" /> -->
     <param name="girpper_exist" value="true" />
     <remap from="joint_ctrl_single" to="/joint_states" />
   </node>
 </launch>
 ```
 
-启动控制节点
+`start_single_piper_rviz.launch`如下:
+
+```xml
+<launch>
+  <arg name="can_port" default="can0" />
+  <arg name="auto_enable" default="true" />
+  <include file="$(find piper_description)/launch/piper_with_gripper/display_xacro.launch"/>
+  <!-- 启动机械臂节点 -->
+  <node name="piper_ctrl_single_node" pkg="piper" type="piper_ctrl_single_node.py" output="screen">
+    <param name="can_port" value="$(arg can_port)" />
+    <param name="auto_enable" value="$(arg auto_enable)" />
+    <param name="gripper_val_mutiple" value="2" />
+    <!-- <param name="rviz_ctrl_flag" value="true" /> -->
+    <param name="girpper_exist" value="true" />
+    <remap from="joint_ctrl_single" to="/joint_states" />
+  </node>
+</launch>
+```
+
+##### （1）启动控制节点
+
+提供几种不同的启动方式，启动的都是相同节点
 
 ```shell
 # 启动节点
 roscore
 rosrun piper piper_ctrl_single_node.py _can_port:=can0 _mode:=0
-# 启动launch
+# 或，使用launch 启动节点
 roslaunch piper start_single_piper.launch can_port:=can0 auto_enable:=true
-# 或，会以默认参数运行
+# 或，直接运行launch，会以默认参数运行
 roslaunch piper start_single_piper.launch
-# 也可以用rviz开启控制,需要更改的参数如上
+# 也可以用rviz开启控制,需要更改的参数如上述
 roslaunch piper start_single_piper_rviz.launch
 ```
 
@@ -142,19 +168,24 @@ roslaunch piper start_single_piper_rviz.launch
 ```shell
 /arm_status #机械臂状态，详见下文
 /enable_flag #使能标志位，发送给节点，发送true用来使能
-/end_pose #机械臂末端位姿状态反馈
+/end_pose #机械臂末端位姿状态反馈，四元数
+/end_pose_euler #机械臂末端位姿状态反馈，欧拉角(为自定义消息)
 /joint_states #订阅关节消息，给这个消息发送关节位置能控制机械臂运动
 /joint_states_single #机械臂关节状态反馈
 /pos_cmd #末端控制消息
 ```
 
-rosservice list
+`rosservice list`
 
 ```shell
 /enable_srv #机械臂使能服务端
+/go_zero_srv #机械臂归零服务
+/gripper_srv #机械臂夹爪控制服务
+/reset_srv #机械臂重置服务
+/stop_srv #机械臂停止服务
 ```
 
-使能机械臂
+##### （2）使能机械臂
 
 ```shell
 # call 服务端
@@ -163,7 +194,7 @@ rosservice call /enable_srv "enable_request: true"
 rostopic pub /enable_flag std_msgs/Bool "data: true"
 ```
 
-失能机械臂
+##### （3）失能机械臂
 
 ```shell
 # call 服务端
@@ -172,7 +203,7 @@ rosservice call /enable_srv "enable_request: false"
 rostopic pub /enable_flag std_msgs/Bool "data: false"
 ```
 
-发布关节消息
+##### （4）发布关节消息
 
 注意，机械臂会抬起，请确保机械臂工作范围内无障碍
 
@@ -187,22 +218,29 @@ velocity: [0,0,0,0,0,0,10]
 effort: [0,0,0,0,0,0,0.5]" 
 ```
 
-## 注意事项
+##### （5）停止机械臂，注意机械臂会以一个恒定阻尼落下
 
-- 需要先激活can设备，并且设置正确的波特率，才可以读取机械臂消息或者控制机械臂
-- 如果出现
+```shell
+rosservice call /stop_srv
+```
 
-  ```shell
-  使能状态: False
-  <class 'can.exceptions.CanError'> Message NOT sent
-  <class 'can.exceptions.CanError'> Message NOT sent
-  ```
+##### （6）重置机械臂，注意机械臂会立刻掉电落下
 
-  说明机械臂没有与can模块连同，拔插usb后，重新启动机械臂，再激活can模块，然后尝试重新启动节点
+```shell
+rosservice call /reset_srv
+```
 
-- 如果打开 了自动使能，尝试使能5s没有成功后，会自动退出程序
+##### （7）令机械臂归零
 
-### piper自定义消息
+- 如果机械臂为mit模式，将`is_mit_mode`置为`true`
+- 如果机械臂不为mit模式(位置速度控制模式)，将`is_mit_mode`置为`false`
+
+```shell
+rosservice call /go_zero_srv "is_mit_mode: false"
+rosservice call /go_zero_srv "is_mit_mode: true"
+```
+
+### 2.3 piper自定义消息
 
 ros功能包`piper_msgs`
 
@@ -277,93 +315,47 @@ bool communication_status_joint_5//5号关节角度超限位（0：正常 1：�
 bool communication_status_joint_6//6号关节角度超限位（0：正常 1：异常）
 ```
 
-机械臂末端位姿控制，注意:有些奇异点无法到达
+机械臂末端位姿控制，注意：有些奇异点无法到达
 
 `PosCmd.msg`
 
 ```c
+// 单位：m
 float64 x
 float64 y
 float64 z
+// 单位：rad
 float64 roll
 float64 pitch
 float64 yaw
 float64 gripper
-int32 mode1//暂时无用
-int32 mode2//暂时无用
+// 暂为无效参数
+int32 mode1
+int32 mode2
 ```
 
-## 使用仿真
+## 3 注意事项
 
-### rviz
+- 需要先激活can设备，并且设置正确的波特率，才可以读取机械臂消息或者控制机械臂
+- 如果出现
 
-`display_xacro.launch` 打开rviz
+  ```shell
+  使能状态: False
+  <class 'can.exceptions.CanError'> Message NOT sent
+  <class 'can.exceptions.CanError'> Message NOT sent
+  ```
 
-执行
+  说明机械臂没有与can模块连同，拔插usb后，重新启动机械臂，再激活can模块，然后尝试重新启动节点
 
-```shell
-cd Piper_ros
-source devel/setup.bash
-roslaunch piper_description display_xacro.launch
-```
+- 如果打开了自动使能，尝试使能5s没有成功后，会自动退出程序
 
-运行后会发布`/joint_states`,可以通过`rostopic echo /joint_states` 查看
+## 4 Moveit规划器和仿真环境
 
-![ ](./asserts/pictures/tostopic_list.jpg)
+|说明 |文档|
+|---|---|
+|Moveit|[Moveit README](src/piper_moveit/README.md)|
+|仿真|[仿真 README](src/piper_sim/README.md)|
 
-同时会弹出两个页面如下，滑动条数值对应`/joint_states`数值，拖动滑动条可以改变其数值，rviz中的模型也会随动
+## Q&A
 
-有时候滑动条窗口没看到，看下dock栏是否有窗口，可能是被其它页面覆盖了
-
-![ ](./asserts/pictures/piper_rviz.jpg)
-
-### gazebo
-
-执行
-
-```shell
-cd Piper_ros
-source devel/setup.bash
-roslaunch piper_description gazebo_xacro.launch
-```
-
-![ ](./asserts/pictures/piper_gazebo.jpg)
-
-运行后会发布
-
-```shell
-/piper_description/joint_states
-/piper_description/joint1_position_controller/command
-/piper_description/joint2_position_controller/command
-/piper_description/joint3_position_controller/command
-/piper_description/joint4_position_controller/command
-/piper_description/joint5_position_controller/command
-/piper_description/joint6_position_controller/command
-/piper_description/joint7_position_controller/command
-/piper_description/joint8_position_controller/command
-```
-
-`/piper_description/joint_states` 是gazebo的机械臂关节状态的虚拟反馈话题，其余的为gazebo的订阅节点
-
-这几个command话题用来控制gazebo中的机械臂运动，关节在xacro中的限位如下，其中，1～6关节单位为弧度，7、8关节单位为m，因为7、8关节对应夹爪
-
-|joint_name|     limit     |
-|----------|  ---------    |
-|joint1    | [-2.618,2.618]|
-|joint2    | [0,3.14]|
-|joint3    | [-2.697,0]|
-|joint4    | [-1.832,1.832]|
-|joint5    | [-1.22,1.22]|
-|joint6    | [-3.14,3.14]|
-|joint7    | [0,0.038]|
-|joint8    | [-0.038,0]|
-
-假如想要令关节1运动90度，发送
-
-```shell
-rostopic pub /piper_description/joint1_position_controller/command std_msgs/Float64 "data: 1.57"
-```
-
-可以看到机械臂link1旋转了90度
-
-![ ](./asserts/pictures/piper_gazebo_90.jpg)
+[Q&A](Q&A.MD)

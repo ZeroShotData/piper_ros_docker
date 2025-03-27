@@ -10,3 +10,6 @@ src/piper/backup
 *.7z
 *.zip
 *.tar
+analytical_solution
+oculus_reader
+__pycache__
