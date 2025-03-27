@@ -150,14 +150,21 @@ class PiperRosNode(Node):
             
         for client_id, (cmd, client_socket) in commands_to_process:
             try:
+                # Debug: Print the received command
+                self.get_logger().info(f"Processing command: {cmd}")
+                
                 if cmd.get('command') == 'get_pose':
                     # Get current end effector pose - just use the cached value
                     response = json.dumps(self.end_effector_pose) + '\n'
+                    self.get_logger().info(f"Sending pose response: {response.strip()}")
                     client_socket.sendall(response.encode('utf-8'))
+                    # Debug: Confirm response was sent
+                    self.get_logger().info(f"Response sent for get_pose command")
                 elif cmd.get('command') == 'set_pose':
                     # Set end effector pose
                     if not self.GetEnableFlag():
                         response = {'status': 'error', 'message': 'Robot not enabled'}
+                        self.get_logger().warn(f"Cannot set pose: Robot not enabled")
                     else:
                         pos_data = PosCmd()
                         pos_data.x = float(cmd.get('x', self.end_effector_pose['x']))
@@ -169,10 +176,15 @@ class PiperRosNode(Node):
                         pos_data.gripper = float(cmd.get('gripper', 0.0))
                         pos_data.mode1 = 0
                         pos_data.mode2 = 0
+                        self.get_logger().info(f"Setting pose to: x={pos_data.x}, y={pos_data.y}, z={pos_data.z}, " +
+                                             f"rpy=[{pos_data.roll},{pos_data.pitch},{pos_data.yaw}], gripper={pos_data.gripper}")
                         self.pos_callback(pos_data)
                         response = {'status': 'ok'}
                     client_socket.sendall((json.dumps(response) + '\n').encode('utf-8'))
+                    # Debug: Confirm response was sent
+                    self.get_logger().info(f"Response sent for set_pose command: {response}")
                 else:
+                    self.get_logger().warn(f"Unknown command received: {cmd}")
                     response = {'status': 'error', 'message': 'Unknown command'}
                     client_socket.sendall((json.dumps(response) + '\n').encode('utf-8'))
             except Exception as e:
@@ -193,23 +205,37 @@ class PiperRosNode(Node):
                     if client_socket in readable:
                         data = client_socket.recv(1024)
                         if not data:
+                            self.get_logger().info(f"Client {addr} disconnected (no data)")
                             break
+                        
+                        # Debug: Print raw data received
+                        self.get_logger().info(f"Received raw data from {addr}: {data}")
                         
                         # Add to buffer and process complete messages
                         buffer += data.decode('utf-8')
                         messages = buffer.split('\n')
                         
+                        # Debug: Print buffer status
+                        self.get_logger().info(f"Buffer from {addr}: {buffer.strip()}")
+                        self.get_logger().info(f"Split into {len(messages)} messages")
+                        
                         # Process all complete messages - keep only the latest one
                         latest_cmd = None
                         for i in range(len(messages) - 1):
                             try:
-                                latest_cmd = json.loads(messages[i])
-                            except json.JSONDecodeError:
+                                msg = messages[i].strip()
+                                if msg:  # Skip empty messages
+                                    self.get_logger().info(f"Parsing message: {msg}")
+                                    latest_cmd = json.loads(msg)
+                                    self.get_logger().info(f"Parsed JSON: {latest_cmd}")
+                            except json.JSONDecodeError as e:
+                                self.get_logger().error(f"Invalid JSON from {addr}: {e} - Message: {messages[i]}")
                                 response = {'status': 'error', 'message': 'Invalid JSON'}
                                 client_socket.sendall((json.dumps(response) + '\n').encode('utf-8'))
                         
                         # Store only the latest command
                         if latest_cmd:
+                            self.get_logger().info(f"Storing latest command from {addr}: {latest_cmd}")
                             with self.command_lock:
                                 self.latest_commands[client_id] = (latest_cmd, client_socket)
                         
@@ -221,15 +247,15 @@ class PiperRosNode(Node):
                         continue
                     else:
                         # Actual error
-                        self.get_logger().error(f"Socket error: {e}")
+                        self.get_logger().error(f"Socket error with {addr}: {e}")
                         break
                 except Exception as e:
-                    self.get_logger().error(f"Error handling client: {e}")
+                    self.get_logger().error(f"Error handling client {addr}: {e}")
                     break
                 
                 time.sleep(0.01)  # Small sleep to prevent CPU hogging
         except Exception as e:
-            self.get_logger().error(f"Error in client handler: {e}")
+            self.get_logger().error(f"Error in client handler for {addr}: {e}")
         finally:
             try:
                 if client_socket in self.client_sockets:
@@ -239,11 +265,13 @@ class PiperRosNode(Node):
                     if client_id in self.latest_commands:
                         del self.latest_commands[client_id]
                 client_socket.close()
-            except:
-                pass
+            except Exception as e:
+                self.get_logger().error(f"Error cleaning up client {addr}: {e}")
             self.get_logger().info(f"Connection closed from {addr}")
 
     def GetEnableFlag(self):
+        # Debug: Print enable status when checked
+        self.get_logger().debug(f"Enable flag checked, status: {self.__enable_flag}")
         return self.__enable_flag
 
     def publish_thread(self):
@@ -291,12 +319,20 @@ class PiperRosNode(Node):
         
         # Main publish loop
         self.get_logger().info("Starting publish loop")
+        last_pose_debug_time = time.time()
+        
         while rclpy.ok():
             # Publish all required data
             self.PublishArmState()
             self.PublishArmJointAndGripper()
             self.PublishArmCtrlAndGripper()
             self.PublishArmEndPose()
+            
+            # Periodically log the current end effector pose (every 5 seconds)
+            current_time = time.time()
+            if current_time - last_pose_debug_time > 5.0:
+                self.get_logger().debug(f"Current end effector pose: {self.end_effector_pose}")
+                last_pose_debug_time = current_time
             
             # Sleep at the specified rate
             rate.sleep()
@@ -417,6 +453,7 @@ class PiperRosNode(Node):
         rz = round(pos_data.yaw*1000*factor)
         
         if(self.GetEnableFlag()):
+            self.get_logger().debug(f"Setting robot pose: x={x}, y={y}, z={z}, rx={rx}, ry={ry}, rz={rz}")
             self.piper.MotionCtrl_1(0x00, 0x00, 0x00)
             self.piper.MotionCtrl_2(0x01, 0x02, 50)
             self.piper.EndPoseCtrl(x, y, z, rx, ry, rz)
@@ -426,6 +463,8 @@ class PiperRosNode(Node):
             if self.gripper_exist:
                 self.piper.GripperCtrl(abs(gripper), 1000, 0x01, 0)
             self.piper.MotionCtrl_2(0x01, 0x00, 50)
+        else:
+            self.get_logger().warn(f"Cannot set pose: Robot not enabled")
 
     def joint_callback(self, joint_data):
         """Callback function for joint angles
