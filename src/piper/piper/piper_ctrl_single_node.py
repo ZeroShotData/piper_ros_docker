@@ -9,6 +9,8 @@ import time
 import threading
 import argparse
 import math
+import socket
+import json
 from piper_sdk import *
 from piper_sdk import C_PiperInterface
 from piper_msgs.msg import PiperStatusMsg, PosCmd
@@ -28,17 +30,23 @@ class PiperRosNode(Node):
         self.declare_parameter('auto_enable', False)
         self.declare_parameter('gripper_exist', True)
         self.declare_parameter('gripper_val_mutiple', 1)
+        self.declare_parameter('rviz_ctrl_flag', False)
+        self.declare_parameter('listen_port', 0)  # 0 means don't listen
 
         self.can_port = self.get_parameter('can_port').get_parameter_value().string_value
         self.auto_enable = self.get_parameter('auto_enable').get_parameter_value().bool_value
         self.gripper_exist = self.get_parameter('gripper_exist').get_parameter_value().bool_value
         self.gripper_val_mutiple = self.get_parameter('gripper_val_mutiple').get_parameter_value().integer_value
         self.gripper_val_mutiple = max(0, min(self.gripper_val_mutiple, 10))
+        self.rviz_ctrl_flag = self.get_parameter('rviz_ctrl_flag').get_parameter_value().bool_value
+        self.listen_port = self.get_parameter('listen_port').get_parameter_value().integer_value
 
         self.get_logger().info(f"can_port is {self.can_port}")
         self.get_logger().info(f"auto_enable is {self.auto_enable}")
         self.get_logger().info(f"gripper_exist is {self.gripper_exist}")
         self.get_logger().info(f"gripper_val_mutiple is {self.gripper_val_mutiple}")
+        self.get_logger().info(f"rviz_ctrl_flag is {self.rviz_ctrl_flag}")
+        self.get_logger().info(f"listen_port is {self.listen_port}")
         # Publishers
         self.joint_pub = self.create_publisher(JointState, 'joint_states_single', 1)
         self.joint_ctrl_pub = self.create_publisher(JointState, 'joint_ctrl', 1)
@@ -64,6 +72,12 @@ class PiperRosNode(Node):
         self.piper = C_PiperInterface(can_name=self.can_port)
         self.piper.ConnectPort()
 
+        # TCP server for remote control
+        self.end_effector_pose = {
+            'x': 0.0, 'y': 0.0, 'z': 0.0,
+            'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0
+        }
+        
         # Start subscription thread
         self.create_subscription(PosCmd, 'pos_cmd', self.pos_callback, 1)
         self.create_subscription(JointState, 'joint_ctrl_single', self.joint_callback, 1)
@@ -71,6 +85,84 @@ class PiperRosNode(Node):
 
         self.publisher_thread = threading.Thread(target=self.publish_thread)
         self.publisher_thread.start()
+        
+        # Start TCP server if port is specified
+        if self.listen_port > 0:
+            self.get_logger().info(f"Starting TCP server on port {self.listen_port}")
+            self.server_thread = threading.Thread(target=self.tcp_server_thread)
+            self.server_thread.daemon = True
+            self.server_thread.start()
+
+    def tcp_server_thread(self):
+        """TCP server thread for remote control of the robotic arm"""
+        server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        
+        try:
+            server_socket.bind(('0.0.0.0', self.listen_port))
+            server_socket.listen(5)
+            self.get_logger().info(f"TCP server listening on port {self.listen_port}")
+            
+            while rclpy.ok():
+                try:
+                    client_socket, addr = server_socket.accept()
+                    self.get_logger().info(f"Connection from {addr}")
+                    client_thread = threading.Thread(
+                        target=self.handle_client,
+                        args=(client_socket, addr)
+                    )
+                    client_thread.daemon = True
+                    client_thread.start()
+                except Exception as e:
+                    self.get_logger().error(f"Error accepting connection: {e}")
+        except Exception as e:
+            self.get_logger().error(f"Error starting TCP server: {e}")
+        finally:
+            server_socket.close()
+    
+    def handle_client(self, client_socket, addr):
+        """Handle client connection"""
+        try:
+            while rclpy.ok():
+                data = client_socket.recv(1024)
+                if not data:
+                    break
+                
+                try:
+                    cmd = json.loads(data.decode('utf-8'))
+                    if cmd.get('command') == 'get_pose':
+                        # Get current end effector pose
+                        response = json.dumps(self.end_effector_pose) + '\n'
+                        client_socket.sendall(response.encode('utf-8'))
+                    elif cmd.get('command') == 'set_pose':
+                        # Set end effector pose
+                        if not self.GetEnableFlag():
+                            response = {'status': 'error', 'message': 'Robot not enabled'}
+                        else:
+                            pos_data = PosCmd()
+                            pos_data.x = float(cmd.get('x', self.end_effector_pose['x']))
+                            pos_data.y = float(cmd.get('y', self.end_effector_pose['y']))
+                            pos_data.z = float(cmd.get('z', self.end_effector_pose['z']))
+                            pos_data.roll = float(cmd.get('roll', self.end_effector_pose['roll']))
+                            pos_data.pitch = float(cmd.get('pitch', self.end_effector_pose['pitch']))
+                            pos_data.yaw = float(cmd.get('yaw', self.end_effector_pose['yaw']))
+                            pos_data.gripper = float(cmd.get('gripper', 0.0))
+                            pos_data.mode1 = 0
+                            pos_data.mode2 = 0
+                            self.pos_callback(pos_data)
+                            response = {'status': 'ok'}
+                        client_socket.sendall((json.dumps(response) + '\n').encode('utf-8'))
+                    else:
+                        response = {'status': 'error', 'message': 'Unknown command'}
+                        client_socket.sendall((json.dumps(response) + '\n').encode('utf-8'))
+                except json.JSONDecodeError:
+                    response = {'status': 'error', 'message': 'Invalid JSON'}
+                    client_socket.sendall((json.dumps(response) + '\n').encode('utf-8'))
+        except Exception as e:
+            self.get_logger().error(f"Error handling client: {e}")
+        finally:
+            self.get_logger().info(f"Connection closed from {addr}")
+            client_socket.close()
 
     def GetEnableFlag(self):
         return self.__enable_flag
@@ -205,6 +297,16 @@ class PiperRosNode(Node):
         endpos.orientation.z = quaternion[2]
         endpos.orientation.w = quaternion[3]
         self.end_pose_pub.publish(endpos)
+        
+        # Update stored end effector pose
+        self.end_effector_pose = {
+            'x': endpos.position.x,
+            'y': endpos.position.y,
+            'z': endpos.position.z,
+            'roll': roll,
+            'pitch': pitch,
+            'yaw': yaw
+        }
 
     def pos_callback(self, pos_data):
         """Callback function for subscribing to the end effector pose

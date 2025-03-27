@@ -56,6 +56,12 @@ def generate_launch_description():
         description='gripper'
     )
 
+    listen_port_arg = DeclareLaunchArgument(
+        'listen_port',
+        default_value='0',
+        description='TCP port for remote control (0 = disabled)'
+    )
+
     # Define the robot arm node
     piper_ctrl_node = Node(
         package='piper',
@@ -66,7 +72,9 @@ def generate_launch_description():
             {'can_port': LaunchConfiguration('can_port')},
             {'auto_enable': LaunchConfiguration('auto_enable')},
             {'gripper_val_mutiple': LaunchConfiguration('gripper_val_mutiple')},
-            {'gripper_exist': LaunchConfiguration('gripper_exist')}
+            {'gripper_exist': LaunchConfiguration('gripper_exist')},
+            {'rviz_ctrl_flag': LaunchConfiguration('rviz_ctrl_flag')},
+            {'listen_port': LaunchConfiguration('listen_port')}
         ],
         remappings=[
             ('joint_ctrl_single', '/joint_states')
@@ -80,5 +88,7 @@ def generate_launch_description():
         display_xacro_launch,
         gripper_exist_arg,
         gripper_val_mutiple_arg,
+        rviz_ctrl_flag_arg,
+        listen_port_arg,
         piper_ctrl_node
     ])
