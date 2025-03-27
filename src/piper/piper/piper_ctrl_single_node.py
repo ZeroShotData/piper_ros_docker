@@ -18,6 +18,7 @@ from piper_msgs.srv import Enable
 from geometry_msgs.msg import Pose
 from scipy.spatial.transform import Rotation as R  # For Euler angle to quaternion conversion
 from numpy import clip
+import select  # For non-blocking socket operations
 
 
 class PiperRosNode(Node):
@@ -78,6 +79,11 @@ class PiperRosNode(Node):
             'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0
         }
         
+        # Store the latest command instead of using a queue
+        self.latest_commands = {}  # Dictionary to store latest command for each client
+        self.client_sockets = []
+        self.command_lock = threading.Lock()  # Lock to synchronize access to latest_commands
+        
         # Start subscription thread
         self.create_subscription(PosCmd, 'pos_cmd', self.pos_callback, 1)
         self.create_subscription(JointState, 'joint_ctrl_single', self.joint_callback, 1)
@@ -97,6 +103,7 @@ class PiperRosNode(Node):
         """TCP server thread for remote control of the robotic arm"""
         server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        server_socket.settimeout(0.1)  # Make accept non-blocking with short timeout
         
         try:
             server_socket.bind(('0.0.0.0', self.listen_port))
@@ -105,112 +112,193 @@ class PiperRosNode(Node):
             
             while rclpy.ok():
                 try:
-                    client_socket, addr = server_socket.accept()
-                    self.get_logger().info(f"Connection from {addr}")
-                    client_thread = threading.Thread(
-                        target=self.handle_client,
-                        args=(client_socket, addr)
-                    )
-                    client_thread.daemon = True
-                    client_thread.start()
+                    # Use select for non-blocking accept
+                    readable, _, _ = select.select([server_socket], [], [], 0.1)
+                    if server_socket in readable:
+                        client_socket, addr = server_socket.accept()
+                        self.get_logger().info(f"Connection from {addr}")
+                        self.client_sockets.append(client_socket)
+                        client_thread = threading.Thread(
+                            target=self.handle_client,
+                            args=(client_socket, addr)
+                        )
+                        client_thread.daemon = True
+                        client_thread.start()
                 except Exception as e:
                     self.get_logger().error(f"Error accepting connection: {e}")
+                    
+                # Process latest commands for all clients
+                self.process_latest_commands()
+                time.sleep(0.01)  # Small sleep to prevent CPU hogging
         except Exception as e:
             self.get_logger().error(f"Error starting TCP server: {e}")
         finally:
             server_socket.close()
+            for sock in self.client_sockets:
+                try:
+                    sock.close()
+                except:
+                    pass
+    
+    def process_latest_commands(self):
+        """Process the latest command for each client"""
+        with self.command_lock:
+            # Make a copy to avoid modifying while iterating
+            commands_to_process = list(self.latest_commands.items())
+            # Clear the commands dictionary
+            self.latest_commands.clear()
+            
+        for client_id, (cmd, client_socket) in commands_to_process:
+            try:
+                if cmd.get('command') == 'get_pose':
+                    # Get current end effector pose - just use the cached value
+                    response = json.dumps(self.end_effector_pose) + '\n'
+                    client_socket.sendall(response.encode('utf-8'))
+                elif cmd.get('command') == 'set_pose':
+                    # Set end effector pose
+                    if not self.GetEnableFlag():
+                        response = {'status': 'error', 'message': 'Robot not enabled'}
+                    else:
+                        pos_data = PosCmd()
+                        pos_data.x = float(cmd.get('x', self.end_effector_pose['x']))
+                        pos_data.y = float(cmd.get('y', self.end_effector_pose['y']))
+                        pos_data.z = float(cmd.get('z', self.end_effector_pose['z']))
+                        pos_data.roll = float(cmd.get('roll', self.end_effector_pose['roll']))
+                        pos_data.pitch = float(cmd.get('pitch', self.end_effector_pose['pitch']))
+                        pos_data.yaw = float(cmd.get('yaw', self.end_effector_pose['yaw']))
+                        pos_data.gripper = float(cmd.get('gripper', 0.0))
+                        pos_data.mode1 = 0
+                        pos_data.mode2 = 0
+                        self.pos_callback(pos_data)
+                        response = {'status': 'ok'}
+                    client_socket.sendall((json.dumps(response) + '\n').encode('utf-8'))
+                else:
+                    response = {'status': 'error', 'message': 'Unknown command'}
+                    client_socket.sendall((json.dumps(response) + '\n').encode('utf-8'))
+            except Exception as e:
+                self.get_logger().error(f"Error processing command: {e}")
     
     def handle_client(self, client_socket, addr):
         """Handle client connection"""
+        # Set socket to non-blocking
+        client_socket.setblocking(0)
+        buffer = ""
+        client_id = id(client_socket)  # Unique identifier for this client
+        
         try:
             while rclpy.ok():
-                data = client_socket.recv(1024)
-                if not data:
+                try:
+                    # Use select for non-blocking receive
+                    readable, _, _ = select.select([client_socket], [], [], 0.1)
+                    if client_socket in readable:
+                        data = client_socket.recv(1024)
+                        if not data:
+                            break
+                        
+                        # Add to buffer and process complete messages
+                        buffer += data.decode('utf-8')
+                        messages = buffer.split('\n')
+                        
+                        # Process all complete messages - keep only the latest one
+                        latest_cmd = None
+                        for i in range(len(messages) - 1):
+                            try:
+                                latest_cmd = json.loads(messages[i])
+                            except json.JSONDecodeError:
+                                response = {'status': 'error', 'message': 'Invalid JSON'}
+                                client_socket.sendall((json.dumps(response) + '\n').encode('utf-8'))
+                        
+                        # Store only the latest command
+                        if latest_cmd:
+                            with self.command_lock:
+                                self.latest_commands[client_id] = (latest_cmd, client_socket)
+                        
+                        # Keep the incomplete message in the buffer
+                        buffer = messages[-1]
+                except socket.error as e:
+                    if e.args[0] == socket.EWOULDBLOCK:
+                        # No data available, continue
+                        continue
+                    else:
+                        # Actual error
+                        self.get_logger().error(f"Socket error: {e}")
+                        break
+                except Exception as e:
+                    self.get_logger().error(f"Error handling client: {e}")
                     break
                 
-                try:
-                    cmd = json.loads(data.decode('utf-8'))
-                    if cmd.get('command') == 'get_pose':
-                        # Get current end effector pose
-                        response = json.dumps(self.end_effector_pose) + '\n'
-                        client_socket.sendall(response.encode('utf-8'))
-                    elif cmd.get('command') == 'set_pose':
-                        # Set end effector pose
-                        if not self.GetEnableFlag():
-                            response = {'status': 'error', 'message': 'Robot not enabled'}
-                        else:
-                            pos_data = PosCmd()
-                            pos_data.x = float(cmd.get('x', self.end_effector_pose['x']))
-                            pos_data.y = float(cmd.get('y', self.end_effector_pose['y']))
-                            pos_data.z = float(cmd.get('z', self.end_effector_pose['z']))
-                            pos_data.roll = float(cmd.get('roll', self.end_effector_pose['roll']))
-                            pos_data.pitch = float(cmd.get('pitch', self.end_effector_pose['pitch']))
-                            pos_data.yaw = float(cmd.get('yaw', self.end_effector_pose['yaw']))
-                            pos_data.gripper = float(cmd.get('gripper', 0.0))
-                            pos_data.mode1 = 0
-                            pos_data.mode2 = 0
-                            self.pos_callback(pos_data)
-                            response = {'status': 'ok'}
-                        client_socket.sendall((json.dumps(response) + '\n').encode('utf-8'))
-                    else:
-                        response = {'status': 'error', 'message': 'Unknown command'}
-                        client_socket.sendall((json.dumps(response) + '\n').encode('utf-8'))
-                except json.JSONDecodeError:
-                    response = {'status': 'error', 'message': 'Invalid JSON'}
-                    client_socket.sendall((json.dumps(response) + '\n').encode('utf-8'))
+                time.sleep(0.01)  # Small sleep to prevent CPU hogging
         except Exception as e:
-            self.get_logger().error(f"Error handling client: {e}")
+            self.get_logger().error(f"Error in client handler: {e}")
         finally:
+            try:
+                if client_socket in self.client_sockets:
+                    self.client_sockets.remove(client_socket)
+                # Remove any stored commands for this client
+                with self.command_lock:
+                    if client_id in self.latest_commands:
+                        del self.latest_commands[client_id]
+                client_socket.close()
+            except:
+                pass
             self.get_logger().info(f"Connection closed from {addr}")
-            client_socket.close()
 
     def GetEnableFlag(self):
         return self.__enable_flag
 
     def publish_thread(self):
-        """Publish messages from the robotic arm
-        """
+        """Publish messages from the robotic arm"""
         rate = self.create_rate(200)  # 200 Hz
-        enable_flag = False
-        # Set timeout (seconds)
-        timeout = 5
-        # Record the time before entering the loop
-        start_time = time.time()
-        elapsed_time_flag = False
-        while rclpy.ok():
-            if(self.auto_enable):
-                while not (enable_flag):
-                    elapsed_time = time.time() - start_time
-                    print("--------------------")
-                    enable_flag = self.piper.GetArmLowSpdInfoMsgs().motor_1.foc_status.driver_enable_status and \
-                        self.piper.GetArmLowSpdInfoMsgs().motor_2.foc_status.driver_enable_status and \
-                        self.piper.GetArmLowSpdInfoMsgs().motor_3.foc_status.driver_enable_status and \
-                        self.piper.GetArmLowSpdInfoMsgs().motor_4.foc_status.driver_enable_status and \
-                        self.piper.GetArmLowSpdInfoMsgs().motor_5.foc_status.driver_enable_status and \
-                        self.piper.GetArmLowSpdInfoMsgs().motor_6.foc_status.driver_enable_status
-                    print("Enable status:", enable_flag)
-                    self.piper.EnableArm(7)
+        
+        # Handle auto-enable with cleaner code
+        if self.auto_enable:
+            self.get_logger().info("Auto-enable is active, attempting to enable arm...")
+            start_time = time.time()
+            timeout = 5
+            
+            while rclpy.ok():
+                # Check all motors at once
+                motor_states = [
+                    self.piper.GetArmLowSpdInfoMsgs().motor_1.foc_status.driver_enable_status,
+                    self.piper.GetArmLowSpdInfoMsgs().motor_2.foc_status.driver_enable_status,
+                    self.piper.GetArmLowSpdInfoMsgs().motor_3.foc_status.driver_enable_status,
+                    self.piper.GetArmLowSpdInfoMsgs().motor_4.foc_status.driver_enable_status,
+                    self.piper.GetArmLowSpdInfoMsgs().motor_5.foc_status.driver_enable_status,
+                    self.piper.GetArmLowSpdInfoMsgs().motor_6.foc_status.driver_enable_status
+                ]
+                
+                all_enabled = all(motor_states)
+                if all_enabled:
+                    self.get_logger().info("All motors enabled successfully")
+                    self.__enable_flag = True
+                    break
+                
+                # Check for timeout
+                if (time.time() - start_time) > timeout:
+                    self.get_logger().error("Timeout while enabling motors, exiting")
+                    exit(0)
+                
+                # Try enabling and wait a bit
+                self.piper.EnableArm(7)
+                if self.gripper_exist:
                     self.piper.GripperCtrl(0, 1000, 0x01, 0)
-                    if(enable_flag):
-                        self.__enable_flag = True
-                    print("--------------------")
-                    # Check if the timeout has been exceeded
-                    if elapsed_time > timeout:
-                        print("Timeout....")
-                        elapsed_time_flag = True
-                        enable_flag = True
-                        break
-                    time.sleep(1)
-                    pass
-            if(elapsed_time_flag):
-                print("Automatic enable timeout, exiting program")
-                exit(0)
-
+                time.sleep(0.5)
+                
+                # Periodically report status (once per second)
+                if int(time.time() - start_time) != int(time.time() - start_time - 0.1):
+                    enabled_count = sum(1 for state in motor_states if state)
+                    self.get_logger().info(f"Enabling motors: {enabled_count}/6 enabled")
+        
+        # Main publish loop
+        self.get_logger().info("Starting publish loop")
+        while rclpy.ok():
+            # Publish all required data
             self.PublishArmState()
             self.PublishArmJointAndGripper()
             self.PublishArmCtrlAndGripper()
             self.PublishArmEndPose()
-
+            
+            # Sleep at the specified rate
             rate.sleep()
 
     def PublishArmState(self):
@@ -298,7 +386,7 @@ class PiperRosNode(Node):
         endpos.orientation.w = quaternion[3]
         self.end_pose_pub.publish(endpos)
         
-        # Update stored end effector pose
+        # Update stored end effector pose (cache it for fast retrieval)
         self.end_effector_pose = {
             'x': endpos.position.x,
             'y': endpos.position.y,
@@ -315,31 +403,26 @@ class PiperRosNode(Node):
             pos_data (): The position data
         """
         factor = 180 / 3.1415926
-        self.get_logger().info(f"Received PosCmd:")
-        self.get_logger().info(f"x: {pos_data.x}")
-        self.get_logger().info(f"y: {pos_data.y}")
-        self.get_logger().info(f"z: {pos_data.z}")
-        self.get_logger().info(f"roll: {pos_data.roll}")
-        self.get_logger().info(f"pitch: {pos_data.pitch}")
-        self.get_logger().info(f"yaw: {pos_data.yaw}")
-        self.get_logger().info(f"gripper: {pos_data.gripper}")
-        self.get_logger().info(f"mode1: {pos_data.mode1}")
-        self.get_logger().info(f"mode2: {pos_data.mode2}")
+        # Only log at debug level and less frequently
+        if self.get_clock().now().nanoseconds % 1000000000 < 50000000:  # Log roughly every second
+            self.get_logger().debug(f"Received PosCmd: x={pos_data.x}, y={pos_data.y}, z={pos_data.z}, " +
+                                   f"rpy=[{pos_data.roll},{pos_data.pitch},{pos_data.yaw}], gripper={pos_data.gripper}")
+        
+        # Convert values with minimal processing
         x = round(pos_data.x*1000) * 1000
         y = round(pos_data.y*1000) * 1000
         z = round(pos_data.z*1000) * 1000
         rx = round(pos_data.roll*1000*factor)
         ry = round(pos_data.pitch*1000*factor)
         rz = round(pos_data.yaw*1000*factor)
+        
         if(self.GetEnableFlag()):
             self.piper.MotionCtrl_1(0x00, 0x00, 0x00)
             self.piper.MotionCtrl_2(0x01, 0x02, 50)
             self.piper.EndPoseCtrl(x, y, z, rx, ry, rz)
             gripper = round(pos_data.gripper * 1000 * 1000)
-            if pos_data.gripper > 80000:
-                gripper = 80000
-            if pos_data.gripper < 0:
-                gripper = 0
+            gripper = max(0, min(gripper, 80000))  # Clamp values efficiently
+            
             if self.gripper_exist:
                 self.piper.GripperCtrl(abs(gripper), 1000, 0x01, 0)
             self.piper.MotionCtrl_2(0x01, 0x00, 50)
@@ -350,65 +433,51 @@ class PiperRosNode(Node):
         Args:
             joint_data (): The joint data
         """
+        if not self.GetEnableFlag():
+            return  # Skip processing if not enabled
+
         factor = 57324.840764  # 1000*180/3.14
-        # self.get_logger().info(f"Received Joint States:")
-
-        # 创建一个字典来存储关节名称与位置的映射
-        joint_positions = {}
-        joint_6 = 0
-
-        # 遍历joint_data.name来映射位置
-        for idx, joint_name in enumerate(joint_data.name):
-            # self.get_logger().info(f"{joint_name}: {joint_data.position[idx]}")
-            joint_positions[joint_name] = round(joint_data.position[idx] * factor)
         
-        # 获取第7个关节的位置
+        # Create a joint positions dictionary more efficiently
+        joint_positions = {name: round(joint_data.position[idx] * factor) 
+                          for idx, name in enumerate(joint_data.name) if idx < len(joint_data.position)}
+        
+        # Get gripper value if available
+        joint_6 = 0
         if len(joint_data.position) >= 7:
-            # self.get_logger().info(f"joint_7: {joint_data.position[6]}")
-            joint_6 = round(joint_data.position[6] * 1000 * 1000)
-            joint_6 = joint_6 * self.gripper_val_mutiple
-
-        # 控制电机速度
-        if self.GetEnableFlag():
-            if joint_data.velocity != []:
-                all_zeros = all(v == 0 for v in joint_data.velocity)
-            else:
-                all_zeros = True
-            if not all_zeros:
-                lens = len(joint_data.velocity)
-                if lens == 7:
-                    vel_all = clip(round(joint_data.velocity[6]), 1, 100)
-                    self.get_logger().info(f"vel_all: {vel_all}")
-                    self.piper.MotionCtrl_2(0x01, 0x01, vel_all)
-                else:
-                    self.piper.MotionCtrl_2(0x01, 0x01, 30)
+            joint_6 = round(joint_data.position[6] * 1000 * 1000 * self.gripper_val_mutiple)
+            
+        # Control motor speed
+        if joint_data.velocity and not all(v == 0 for v in joint_data.velocity):
+            if len(joint_data.velocity) == 7:
+                vel_all = clip(round(joint_data.velocity[6]), 1, 100)
+                self.piper.MotionCtrl_2(0x01, 0x01, vel_all)
             else:
                 self.piper.MotionCtrl_2(0x01, 0x01, 30)
+        else:
+            self.piper.MotionCtrl_2(0x01, 0x01, 30)
 
-            # 使用关节名称来动态控制关节
-            self.piper.JointCtrl(
-                joint_positions.get('joint1', 0),
-                joint_positions.get('joint2', 0),
-                joint_positions.get('joint3', 0),
-                joint_positions.get('joint4', 0),
-                joint_positions.get('joint5', 0),
-                joint_positions.get('joint6', 0)
-            )
+        # Control joints more efficiently
+        self.piper.JointCtrl(
+            joint_positions.get('joint1', 0),
+            joint_positions.get('joint2', 0),
+            joint_positions.get('joint3', 0),
+            joint_positions.get('joint4', 0),
+            joint_positions.get('joint5', 0),
+            joint_positions.get('joint6', 0)
+        )
 
-            # 夹爪控制
-            if self.gripper_exist:
-                if len(joint_data.effort) >= 7:
-                    gripper_effort = clip(joint_data.effort[6], 0.5, 3)
-                    # self.get_logger().info(f"gripper_effort: {gripper_effort}")
-                    if not math.isnan(gripper_effort):
-                        gripper_effort = round(gripper_effort * 1000)
-                    else:
-                        # self.get_logger().warning("Gripper effort is NaN, using default value.")
-                        gripper_effort = 0  # 设置默认值
-                    self.piper.GripperCtrl(abs(joint_6), gripper_effort, 0x01, 0)
+        # Gripper control
+        if self.gripper_exist:
+            if len(joint_data.effort) >= 7:
+                gripper_effort = clip(joint_data.effort[6], 0.5, 3)
+                if not math.isnan(gripper_effort):
+                    gripper_effort = round(gripper_effort * 1000)
                 else:
-                    self.piper.GripperCtrl(abs(joint_6), 1000, 0x01, 0)
-
+                    gripper_effort = 1000  # Default value
+                self.piper.GripperCtrl(abs(joint_6), gripper_effort, 0x01, 0)
+            else:
+                self.piper.GripperCtrl(abs(joint_6), 1000, 0x01, 0)
 
     def enable_callback(self, enable_flag: Bool):
         """Callback function for enabling the robotic arm
@@ -416,8 +485,11 @@ class PiperRosNode(Node):
         Args:
             enable_flag (): Boolean flag
         """
-        self.get_logger().info(f"Received enable flag:")
-        self.get_logger().info(f"enable_flag: {enable_flag.data}")
+        if self.__enable_flag == enable_flag.data:
+            return  # Skip if no change
+            
+        self.get_logger().info(f"Setting enable flag to: {enable_flag.data}")
+        
         if enable_flag.data:
             self.__enable_flag = True
             self.piper.EnableArm(7)
@@ -431,55 +503,52 @@ class PiperRosNode(Node):
 
     def handle_enable_service(self, req, resp):
         """Handle enable service for the robotic arm"""
-        self.get_logger().info(f"Received request: {req.enable_request}")
+        self.get_logger().info(f"Received enable service request: {req.enable_request}")
+        
+        # Initialize variables
         enable_flag = False
-        loop_flag = False
         # Set timeout duration (seconds)
-        timeout = 5
-        # Record the time before entering the loop
+        timeout = 5.0
         start_time = time.time()
-        while not loop_flag:
-            elapsed_time = time.time() - start_time
-            self.get_logger().info(f"--------------------")
-            enable_list = []
-            enable_list.append(self.piper.GetArmLowSpdInfoMsgs().motor_1.foc_status.driver_enable_status)
-            enable_list.append(self.piper.GetArmLowSpdInfoMsgs().motor_2.foc_status.driver_enable_status)
-            enable_list.append(self.piper.GetArmLowSpdInfoMsgs().motor_3.foc_status.driver_enable_status)
-            enable_list.append(self.piper.GetArmLowSpdInfoMsgs().motor_4.foc_status.driver_enable_status)
-            enable_list.append(self.piper.GetArmLowSpdInfoMsgs().motor_5.foc_status.driver_enable_status)
-            enable_list.append(self.piper.GetArmLowSpdInfoMsgs().motor_6.foc_status.driver_enable_status)
-
+        
+        # Fast polling with less logging
+        poll_interval = 0.1  # Poll more frequently for better responsiveness
+        while (time.time() - start_time) < timeout:
+            # Get current status once for all motors
+            enable_list = [
+                self.piper.GetArmLowSpdInfoMsgs().motor_1.foc_status.driver_enable_status,
+                self.piper.GetArmLowSpdInfoMsgs().motor_2.foc_status.driver_enable_status,
+                self.piper.GetArmLowSpdInfoMsgs().motor_3.foc_status.driver_enable_status,
+                self.piper.GetArmLowSpdInfoMsgs().motor_4.foc_status.driver_enable_status,
+                self.piper.GetArmLowSpdInfoMsgs().motor_5.foc_status.driver_enable_status,
+                self.piper.GetArmLowSpdInfoMsgs().motor_6.foc_status.driver_enable_status
+            ]
+            
+            # Update status based on request
             if req.enable_request:
+                # We want to enable, check if all motors are enabled
                 enable_flag = all(enable_list)
                 self.piper.EnableArm(7)
-                self.piper.GripperCtrl(0, 1000, 0x01, 0)
+                if self.gripper_exist:
+                    self.piper.GripperCtrl(0, 1000, 0x01, 0)
             else:
-                enable_flag = any(enable_list)
+                # We want to disable, check if any motor is still enabled
+                enable_flag = not any(enable_list)
                 self.piper.DisableArm(7)
-                self.piper.GripperCtrl(0, 1000, 0x02, 0)
-
-            self.get_logger().info(f"Enable status: {enable_flag}")
-            self.__enable_flag = enable_flag
-            self.get_logger().info(f"--------------------")
-
-            if enable_flag == req.enable_request:
-                loop_flag = True
-                enable_flag = True
-            else:
-                loop_flag = False
-                enable_flag = False
-
-            # Check if timeout duration has been exceeded
-            if elapsed_time > timeout:
-                self.get_logger().info(f"Timeout...")
-                enable_flag = False
-                loop_flag = True
+                if self.gripper_exist:
+                    self.piper.GripperCtrl(0, 1000, 0x02, 0)
+            
+            # Check if we're in the desired state
+            if (req.enable_request and enable_flag) or (not req.enable_request and enable_flag):
+                self.__enable_flag = req.enable_request
                 break
-
-            time.sleep(0.5)
-
+                
+            # Small sleep to prevent CPU hogging
+            time.sleep(poll_interval)
+        
+        # Service response
         resp.enable_response = enable_flag
-        self.get_logger().info(f"Returning response: {resp.enable_response}")
+        self.get_logger().info(f"Enable service response: {resp.enable_response}")
         return resp
 
 
