@@ -16,3 +16,9 @@ analytical_solution
 oculus_reader
 oculus_reader/oculus_reader
 **/__pycache__/
+# Docker 
+.dockerignore
+.docker/
+ros2_ws/build/
+ros2_ws/install/
+ros2_ws/log/
