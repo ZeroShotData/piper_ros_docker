@@ -433,3 +433,66 @@ sudo apt install ros-$ROS_DISTRO-robot-state-publisher
 ```shell
 sudo apt install ros-foxy-xacro
 ```
+
+## Docker Containerization
+
+This repository includes Docker support for containerizing the Piper robot arm software.
+
+### Prerequisites
+
+- Docker and Docker Compose
+- A host machine with access to USB devices (for CAN communication)
+
+### Building the Docker image
+
+```bash
+# Build the Docker image
+docker build -t piper:humble-amd64 .
+```
+
+### Running with Docker Compose
+
+The repository includes docker-compose files for different setups:
+
+1. Standard setup:
+```bash
+docker-compose up -d
+```
+
+2. With display support (for visualization):
+```bash
+docker-compose -f docker-compose.display.yml up -d
+```
+
+### Accessing the Container
+
+You can access the Docker container via SSH on port 2222:
+```bash
+ssh root@localhost -p 2222
+# Password: 1234
+```
+
+### CAN Communication
+
+The CAN interface needs to be activated before using the robot arm:
+```bash
+# Inside the container
+activate_can
+```
+
+### Running the Robot
+
+Once inside the container with the CAN interface activated:
+```bash
+# Start the robot
+start_piper
+
+# Or with visualization
+start_piper_rviz
+```
+
+### Stopping the Container
+
+```bash
+docker-compose down
+```
