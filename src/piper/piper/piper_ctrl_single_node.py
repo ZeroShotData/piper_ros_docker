@@ -73,6 +73,8 @@ class PiperRosNode(Node):
         self.publisher_thread.start()
 
     def GetEnableFlag(self):
+        # Debug: Print enable status when checked
+        self.get_logger().debug(f"Enable flag checked, status: {self.__enable_flag}")
         return self.__enable_flag
 
     def publish_thread(self):
@@ -85,6 +87,10 @@ class PiperRosNode(Node):
         # Record the time before entering the loop
         start_time = time.time()
         elapsed_time_flag = False
+        # Main publish loop
+        self.get_logger().info("Starting publish loop")
+        last_pose_debug_time = time.time()
+        
         while rclpy.ok():
             if(self.auto_enable):
                 while not (enable_flag):
@@ -114,11 +120,26 @@ class PiperRosNode(Node):
                 print("Automatic enable timeout, exiting program")
                 exit(0)
 
+            # Publish all required data
             self.PublishArmState()
             self.PublishArmJointAndGripper()
             self.PublishArmCtrlAndGripper()
             self.PublishArmEndPose()
-
+            
+            # Periodically log the current end pose (every 5 seconds)
+            current_time = time.time()
+            if current_time - last_pose_debug_time > 5.0:
+                endpos_x = self.piper.GetArmEndPoseMsgs().end_pose.X_axis / 1000000
+                endpos_y = self.piper.GetArmEndPoseMsgs().end_pose.Y_axis / 1000000
+                endpos_z = self.piper.GetArmEndPoseMsgs().end_pose.Z_axis / 1000000
+                endpos_roll = self.piper.GetArmEndPoseMsgs().end_pose.RX_axis / 1000
+                endpos_pitch = self.piper.GetArmEndPoseMsgs().end_pose.RY_axis / 1000
+                endpos_yaw = self.piper.GetArmEndPoseMsgs().end_pose.RZ_axis / 1000
+                self.get_logger().debug(f"Current end effector pose: x={endpos_x}, y={endpos_y}, z={endpos_z}, " +
+                                       f"roll={endpos_roll}, pitch={endpos_pitch}, yaw={endpos_yaw}")
+                last_pose_debug_time = current_time
+            
+            # Sleep at the specified rate
             rate.sleep()
 
     def PublishArmState(self):
@@ -230,6 +251,7 @@ class PiperRosNode(Node):
         ry = round(pos_data.pitch*1000*factor)
         rz = round(pos_data.yaw*1000*factor)
         if(self.GetEnableFlag()):
+            self.get_logger().debug(f"Setting robot pose: x={x}, y={y}, z={z}, rx={rx}, ry={ry}, rz={rz}")
             self.piper.MotionCtrl_1(0x00, 0x00, 0x00)
             self.piper.MotionCtrl_2(0x01, 0x02, 50)
             self.piper.EndPoseCtrl(x, y, z, rx, ry, rz)
@@ -241,6 +263,8 @@ class PiperRosNode(Node):
             if self.gripper_exist:
                 self.piper.GripperCtrl(abs(gripper), 1000, 0x01, 0)
             self.piper.MotionCtrl_2(0x01, 0x00, 50)
+        else:
+            self.get_logger().warn(f"Cannot set pose: Robot not enabled")
 
     def joint_callback(self, joint_data):
         """Callback function for joint angles
@@ -284,6 +308,13 @@ class PiperRosNode(Node):
                 self.piper.MotionCtrl_2(0x01, 0x01, 30)
 
             # 使用关节名称来动态控制关节
+            self.get_logger().debug(f"Setting joint angles: " +
+                                  f"j1={joint_positions.get('joint1', 0)}, " +
+                                  f"j2={joint_positions.get('joint2', 0)}, " +
+                                  f"j3={joint_positions.get('joint3', 0)}, " +
+                                  f"j4={joint_positions.get('joint4', 0)}, " +
+                                  f"j5={joint_positions.get('joint5', 0)}, " +
+                                  f"j6={joint_positions.get('joint6', 0)}")
             self.piper.JointCtrl(
                 joint_positions.get('joint1', 0),
                 joint_positions.get('joint2', 0),
@@ -318,11 +349,13 @@ class PiperRosNode(Node):
         self.get_logger().info(f"enable_flag: {enable_flag.data}")
         if enable_flag.data:
             self.__enable_flag = True
+            self.get_logger().debug("Enabling robotic arm")
             self.piper.EnableArm(7)
             if self.gripper_exist:
                 self.piper.GripperCtrl(0, 1000, 0x01, 0)
         else:
             self.__enable_flag = False
+            self.get_logger().debug("Disabling robotic arm")
             self.piper.DisableArm(7)
             if self.gripper_exist:
                 self.piper.GripperCtrl(0, 1000, 0x00, 0)
@@ -347,6 +380,7 @@ class PiperRosNode(Node):
             enable_list.append(self.piper.GetArmLowSpdInfoMsgs().motor_5.foc_status.driver_enable_status)
             enable_list.append(self.piper.GetArmLowSpdInfoMsgs().motor_6.foc_status.driver_enable_status)
 
+            self.get_logger().debug(f"Enable status list: {enable_list}")
             if req.enable_request:
                 enable_flag = all(enable_list)
                 self.piper.EnableArm(7)
