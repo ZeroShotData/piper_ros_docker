@@ -28,6 +28,7 @@ RUN apt-get update && apt-get install -y \
     ros-humble-robot-state-publisher \
     ros-humble-xacro \
     ros-humble-moveit \
+    ros-humble-rosbridge-server \
     supervisor \
     openssh-server \
     ethtool \
@@ -96,7 +97,7 @@ RUN echo 'root:1234' | chpasswd && \
     mkdir -p /var/run/sshd
 
 # Expose ports
-EXPOSE 2222 8765
+EXPOSE 2222 8765 9090
 
 # Configure Git and SSH for GitHub
 ENV GIT_USER_NAME="JulienRineau"
@@ -111,7 +112,8 @@ RUN echo "source /opt/ros/humble/setup.bash" >> ~/.bashrc && \
     echo "source /app/ros2_ws/install/setup.bash" >> ~/.bashrc && \
     echo "alias activate_can='bash /app/can_activate.sh can0 1000000'" >> ~/.bashrc && \
     echo "alias start_piper='ros2 launch piper start_single_piper.launch.py'" >> ~/.bashrc && \
-    echo "alias start_piper_rviz='ros2 launch piper start_single_piper_rviz.launch.py'" >> ~/.bashrc
+    echo "alias start_piper_rviz='ros2 launch piper start_single_piper_rviz.launch.py'" >> ~/.bashrc && \
+    echo "alias start_piper_rosbridge='ros2 launch piper start_single_piper_rosbridge.launch.py'" >> ~/.bashrc
 
 RUN mv /app/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
