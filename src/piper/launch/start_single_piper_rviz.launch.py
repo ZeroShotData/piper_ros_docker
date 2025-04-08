@@ -52,8 +52,14 @@ def generate_launch_description():
     
     gripper_val_mutiple_arg = DeclareLaunchArgument(
         'gripper_val_mutiple',
-        default_value='2',
-        description='gripper'
+        default_value='1',
+        description='gripper value multiplier'
+    )
+
+    use_rosbridge_arg = DeclareLaunchArgument(
+        'use_rosbridge',
+        default_value='false',
+        description='Start rosbridge server for remote access'
     )
 
     # Define the robot arm node
@@ -66,7 +72,9 @@ def generate_launch_description():
             {'can_port': LaunchConfiguration('can_port')},
             {'auto_enable': LaunchConfiguration('auto_enable')},
             {'gripper_val_mutiple': LaunchConfiguration('gripper_val_mutiple')},
-            {'gripper_exist': LaunchConfiguration('gripper_exist')}
+            {'gripper_exist': LaunchConfiguration('gripper_exist')},
+            {'rviz_ctrl_flag': LaunchConfiguration('rviz_ctrl_flag')},
+            {'use_rosbridge': LaunchConfiguration('use_rosbridge')}
         ],
         remappings=[
             ('joint_ctrl_single', '/joint_states')
@@ -80,5 +88,6 @@ def generate_launch_description():
         display_xacro_launch,
         gripper_exist_arg,
         gripper_val_mutiple_arg,
+        use_rosbridge_arg,
         piper_ctrl_node
     ])

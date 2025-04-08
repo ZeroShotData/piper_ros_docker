@@ -16,6 +16,7 @@ from piper_msgs.srv import Enable
 from geometry_msgs.msg import Pose
 from scipy.spatial.transform import Rotation as R  # For Euler angle to quaternion conversion
 from numpy import clip
+import subprocess
 
 
 class PiperRosNode(Node):
@@ -28,17 +29,23 @@ class PiperRosNode(Node):
         self.declare_parameter('auto_enable', False)
         self.declare_parameter('gripper_exist', True)
         self.declare_parameter('gripper_val_mutiple', 1)
+        self.declare_parameter('rviz_ctrl_flag', False)
+        self.declare_parameter('use_rosbridge', False)
 
         self.can_port = self.get_parameter('can_port').get_parameter_value().string_value
         self.auto_enable = self.get_parameter('auto_enable').get_parameter_value().bool_value
         self.gripper_exist = self.get_parameter('gripper_exist').get_parameter_value().bool_value
         self.gripper_val_mutiple = self.get_parameter('gripper_val_mutiple').get_parameter_value().integer_value
         self.gripper_val_mutiple = max(0, min(self.gripper_val_mutiple, 10))
+        self.rviz_ctrl_flag = self.get_parameter('rviz_ctrl_flag').get_parameter_value().bool_value
+        self.use_rosbridge = self.get_parameter('use_rosbridge').get_parameter_value().bool_value
 
         self.get_logger().info(f"can_port is {self.can_port}")
         self.get_logger().info(f"auto_enable is {self.auto_enable}")
         self.get_logger().info(f"gripper_exist is {self.gripper_exist}")
         self.get_logger().info(f"gripper_val_mutiple is {self.gripper_val_mutiple}")
+        self.get_logger().info(f"rviz_ctrl_flag is {self.rviz_ctrl_flag}")
+        self.get_logger().info(f"use_rosbridge is {self.use_rosbridge}")
         # Publishers
         self.joint_pub = self.create_publisher(JointState, 'joint_states_single', 1)
         self.joint_ctrl_pub = self.create_publisher(JointState, 'joint_ctrl', 1)
@@ -71,6 +78,16 @@ class PiperRosNode(Node):
 
         self.publisher_thread = threading.Thread(target=self.publish_thread)
         self.publisher_thread.start()
+        
+        # Start rosbridge server if enabled
+        if self.use_rosbridge:
+            self.get_logger().info("Starting rosbridge server...")
+            self.rosbridge_process = subprocess.Popen(
+                ["ros2", "launch", "rosbridge_server", "rosbridge_websocket_launch.xml"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+            self.get_logger().info("Rosbridge server started")
 
     def GetEnableFlag(self):
         # Debug: Print enable status when checked
@@ -413,6 +430,20 @@ class PiperRosNode(Node):
         resp.enable_response = enable_flag
         self.get_logger().info(f"Returning response: {resp.enable_response}")
         return resp
+
+    def destroy_node(self):
+        # Terminate rosbridge server if it was started
+        if self.use_rosbridge and hasattr(self, 'rosbridge_process'):
+            self.get_logger().info("Terminating rosbridge server...")
+            self.rosbridge_process.terminate()
+            try:
+                self.rosbridge_process.wait(timeout=5)
+                self.get_logger().info("Rosbridge server terminated")
+            except subprocess.TimeoutExpired:
+                self.get_logger().warning("Rosbridge server termination timed out, forcing kill")
+                self.rosbridge_process.kill()
+        
+        super().destroy_node()
 
 
 def main(args=None):

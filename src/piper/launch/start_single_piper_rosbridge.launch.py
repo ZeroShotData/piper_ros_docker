@@ -1,9 +1,7 @@
 from launch import LaunchDescription
 from launch_ros.actions import Node
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
-from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
-from launch_ros.substitutions import FindPackageShare
+from launch.actions import DeclareLaunchArgument
+from launch.substitutions import LaunchConfiguration
 
 
 def generate_launch_description():
@@ -36,6 +34,13 @@ def generate_launch_description():
         default_value='1',
         description='gripper'
     )
+    
+    # This version always enables rosbridge
+    use_rosbridge_arg = DeclareLaunchArgument(
+        'use_rosbridge',
+        default_value='true',
+        description='Start rosbridge server for remote access'
+    )
 
     # Define the piper node
     piper_node = Node(
@@ -48,25 +53,12 @@ def generate_launch_description():
             'auto_enable': LaunchConfiguration('auto_enable'),
             'gripper_val_mutiple': LaunchConfiguration('gripper_val_mutiple'),
             'gripper_exist': LaunchConfiguration('gripper_exist'),
+            'rviz_ctrl_flag': LaunchConfiguration('rviz_ctrl_flag'),
+            'use_rosbridge': LaunchConfiguration('use_rosbridge'),
         }],
         remappings=[
             ('joint_ctrl_single', '/joint_states'),
         ]
-    )
-
-    # Include rosbridge_server
-    rosbridge_launch = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource([
-            PathJoinSubstitution([
-                FindPackageShare('rosbridge_server'),
-                'launch',
-                'rosbridge_websocket_launch.xml'
-            ])
-        ]),
-        # You can add parameters for rosbridge here if needed
-        # launch_arguments={
-        #     'port': '9090',
-        # }.items(),
     )
 
     # Return the LaunchDescription
@@ -76,6 +68,6 @@ def generate_launch_description():
         gripper_exist_arg,
         gripper_val_mutiple_arg,
         rviz_ctrl_flag_arg,
-        piper_node,
-        rosbridge_launch
+        use_rosbridge_arg,
+        piper_node
     ]) 
