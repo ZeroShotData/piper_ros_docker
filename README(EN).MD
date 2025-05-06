@@ -1,3 +1,11 @@
+# Standard setup for zeroshot arms
+
+bash can_activate.sh can0 1000000 "1-1.1:1.0" ( or whatever you see from bash find_all_can_port.sh)
+
+
+
+
+
 # AgileX Robotic Arm (humble)
 
 [CN](README.MD)

@@ -251,7 +251,7 @@ class PiperRosNode(Node):
         ry = round(pos_data.pitch*1000*factor)
         rz = round(pos_data.yaw*1000*factor)
         if(self.GetEnableFlag()):
-            self.get_logger().debug(f"Setting robot pose: x={x}, y={y}, z={z}, rx={rx}, ry={ry}, rz={rz}")
+            self.get_logger().info(f"Setting robot pose: x={x}, y={y}, z={z}, rx={rx}, ry={ry}, rz={rz}")
             self.piper.MotionCtrl_1(0x00, 0x00, 0x00)
             self.piper.MotionCtrl_2(0x01, 0x02, 50)
             self.piper.EndPoseCtrl(x, y, z, rx, ry, rz)
@@ -300,7 +300,7 @@ class PiperRosNode(Node):
                 lens = len(joint_data.velocity)
                 if lens == 7:
                     vel_all = clip(round(joint_data.velocity[6]), 1, 100)
-                    self.get_logger().info(f"vel_all: {vel_all}")
+                    self.get_logger().debug(f"vel_all: {vel_all}")
                     self.piper.MotionCtrl_2(0x01, 0x01, vel_all)
                 else:
                     self.piper.MotionCtrl_2(0x01, 0x01, 30)
@@ -308,7 +308,7 @@ class PiperRosNode(Node):
                 self.piper.MotionCtrl_2(0x01, 0x01, 30)
 
             # 使用关节名称来动态控制关节
-            self.get_logger().debug(f"Setting joint angles: " +
+            self.get_logger().info(f"Setting joint angles: " +
                                   f"j1={joint_positions.get('joint1', 0)}, " +
                                   f"j2={joint_positions.get('joint2', 0)}, " +
                                   f"j3={joint_positions.get('joint3', 0)}, " +

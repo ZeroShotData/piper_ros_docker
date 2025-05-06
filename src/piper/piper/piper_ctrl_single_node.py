@@ -17,6 +17,7 @@ from geometry_msgs.msg import Pose
 from scipy.spatial.transform import Rotation as R  # For Euler angle to quaternion conversion
 from numpy import clip
 import subprocess
+from rclpy.qos import qos_profile_sensor_data
 
 
 class PiperRosNode(Node):
@@ -71,10 +72,17 @@ class PiperRosNode(Node):
         self.piper = C_PiperInterface(can_name=self.can_port)
         self.piper.ConnectPort()
 
+        # QoS profile defined at top-level import for dropping old samples
+
         # Start subscription thread
         self.create_subscription(PosCmd, 'pos_cmd', self.pos_callback, 1)
-        self.create_subscription(JointState, 'joint_ctrl_single', self.joint_callback, 1)
+        # Use sensor data QoS to ensure old commands are dropped when backend is slow
+        self.create_subscription(JointState, 'joint_ctrl_single', self.joint_callback, qos_profile_sensor_data)
         self.create_subscription(Bool, 'enable_flag', self.enable_callback, 1)
+
+        # Buffer for the latest JointState command
+        self._latest_joint_cmd = None
+        self._joint_cmd_lock = threading.Lock()
 
         self.publisher_thread = threading.Thread(target=self.publish_thread)
         self.publisher_thread.start()
@@ -112,25 +120,23 @@ class PiperRosNode(Node):
             if(self.auto_enable):
                 while not (enable_flag):
                     elapsed_time = time.time() - start_time
-                    print("--------------------")
                     enable_flag = self.piper.GetArmLowSpdInfoMsgs().motor_1.foc_status.driver_enable_status and \
                         self.piper.GetArmLowSpdInfoMsgs().motor_2.foc_status.driver_enable_status and \
                         self.piper.GetArmLowSpdInfoMsgs().motor_3.foc_status.driver_enable_status and \
                         self.piper.GetArmLowSpdInfoMsgs().motor_4.foc_status.driver_enable_status and \
                         self.piper.GetArmLowSpdInfoMsgs().motor_5.foc_status.driver_enable_status and \
                         self.piper.GetArmLowSpdInfoMsgs().motor_6.foc_status.driver_enable_status
-                    print("Enable status:", enable_flag)
                     self.piper.EnableArm(7)
                     self.piper.GripperCtrl(0, 1000, 0x01, 0)
                     if(enable_flag):
                         self.__enable_flag = True
-                    print("--------------------")
                     # Check if the timeout has been exceeded
                     if elapsed_time > timeout:
                         print("Timeout....")
                         elapsed_time_flag = True
                         enable_flag = True
                         break
+                    self.get_logger().info("Waiting for enable flag")
                     time.sleep(1)
                     pass
             if(elapsed_time_flag):
@@ -140,8 +146,10 @@ class PiperRosNode(Node):
             # Publish all required data
             self.PublishArmState()
             self.PublishArmJointAndGripper()
+            self._process_latest_joint_command()
             self.PublishArmCtrlAndGripper()
             self.PublishArmEndPose()
+            
             
             # Periodically log the current end pose (every 5 seconds)
             current_time = time.time()
@@ -284,77 +292,117 @@ class PiperRosNode(Node):
             self.get_logger().warn(f"Cannot set pose: Robot not enabled")
 
     def joint_callback(self, joint_data):
-        """Callback function for joint angles
+        """Store the latest JointState command and return quickly.
 
-        Args:
-            joint_data (): The joint data
+        Heavy work is moved to the publish thread so that we always act on the
+        newest command and avoid building up a backlog of callbacks when the
+        incoming command rate is very high.
         """
-        factor = 57324.840764  # 1000*180/3.14
-        # self.get_logger().info(f"Received Joint States:")
+        with self._joint_cmd_lock:
+            # Only keep reference to the newest message; older ones will be GC-ed
+            self._latest_joint_cmd = joint_data
+        # Nothing else to do here – keeping callback lightweight ensures we can
+        # keep up with high publish rates.
 
-        # 创建一个字典来存储关节名称与位置的映射
+    # ---------------------------------------------------------------------
+    # Helper used in the publish thread to actually send the command to the robot
+    # ---------------------------------------------------------------------
+    def _process_latest_joint_command(self):
+        with self._joint_cmd_lock:
+            joint_data = self._latest_joint_cmd
+            # Reset buffer so we know whether we already consumed this command
+            self._latest_joint_cmd = None
+
+        if joint_data is None:
+            return  # Nothing new to process
+
+        factor = 57324.840764  # 1000*180/3.14
+
         joint_positions = {}
         joint_6 = 0
 
-        # 遍历joint_data.name来映射位置
         for idx, joint_name in enumerate(joint_data.name):
-            # self.get_logger().info(f"{joint_name}: {joint_data.position[idx]}")
             joint_positions[joint_name] = round(joint_data.position[idx] * factor)
-        
-        # 获取第7个关节的位置
+
+        # Gripper (7th joint)
         if len(joint_data.position) >= 7:
-            # self.get_logger().info(f"joint_7: {joint_data.position[6]}")
             joint_6 = round(joint_data.position[6] * 1000 * 1000)
             joint_6 = joint_6 * self.gripper_val_mutiple
 
-        # 控制电机速度
-        if self.GetEnableFlag():
-            if joint_data.velocity != []:
-                all_zeros = all(v == 0 for v in joint_data.velocity)
-            else:
-                all_zeros = True
-            if not all_zeros:
-                lens = len(joint_data.velocity)
-                if lens == 7:
-                    vel_all = clip(round(joint_data.velocity[6]), 1, 100)
-                    self.get_logger().info(f"vel_all: {vel_all}")
-                    self.piper.MotionCtrl_2(0x01, 0x01, vel_all)
-                else:
-                    self.piper.MotionCtrl_2(0x01, 0x01, 30)
-            else:
-                self.piper.MotionCtrl_2(0x01, 0x01, 30)
+        if not self.GetEnableFlag():
+            return  # Robot not enabled – skip
 
-            # 使用关节名称来动态控制关节
-            self.get_logger().debug(f"Setting joint angles: " +
-                                  f"j1={joint_positions.get('joint1', 0)}, " +
-                                  f"j2={joint_positions.get('joint2', 0)}, " +
-                                  f"j3={joint_positions.get('joint3', 0)}, " +
-                                  f"j4={joint_positions.get('joint4', 0)}, " +
-                                  f"j5={joint_positions.get('joint5', 0)}, " +
-                                  f"j6={joint_positions.get('joint6', 0)}")
-            self.piper.JointCtrl(
-                joint_positions.get('joint1', 0),
-                joint_positions.get('joint2', 0),
-                joint_positions.get('joint3', 0),
-                joint_positions.get('joint4', 0),
-                joint_positions.get('joint5', 0),
-                joint_positions.get('joint6', 0)
+        # Ensure the controller is in MIT direct-joint-servo mode exactly once
+        if not hasattr(self, "_mit_mode_set"):
+            try:
+                # Put arm in CAN-joint control + MIT servo (direct position mode)
+                self.piper.MotionCtrl_2(ctrl_mode=0x01,  # CAN command control
+                                        move_mode=0x01,  # MOVE-J
+                                        move_spd_rate_ctrl=100,
+                                        is_mit_mode=0xAD)
+                self._mit_mode_set = True
+                self.get_logger().info("Switched arm to MIT servo mode")
+            except Exception as e:
+                self.get_logger().warn(f"Failed to set MIT mode: {e}")
+
+        # Velocity control – choose an appropriate overall velocity
+        if joint_data.velocity:
+            all_zeros = all(v == 0 for v in joint_data.velocity)
+        else:
+            all_zeros = True
+
+        if not all_zeros:
+            if len(joint_data.velocity) == 7:
+                vel_all = clip(round(joint_data.velocity[6]), 1, 100)
+                self.piper.MotionCtrl_2(0x01, 0x01, vel_all, 0xAD)
+            else:
+                self.piper.MotionCtrl_2(0x01, 0x01, 30, 0xAD)
+        else:
+            self.piper.MotionCtrl_2(0x01, 0x01, 30, 0xAD)
+
+        # Throttle logging of the processed joint command to once per second to aid debugging
+        now = time.time()
+        if not hasattr(self, "_last_cmd_debug_time"):
+            self._last_cmd_debug_time = 0.0
+        if now - self._last_cmd_debug_time > 1.0:
+            self.get_logger().info(
+                f"Joint cmd: j1={joint_positions.get('joint1',0)/57324.84:.2f} j2={joint_positions.get('joint2',0)/57324.84:.2f} "
+                f"j3={joint_positions.get('joint3',0)/57324.84:.2f} j4={joint_positions.get('joint4',0)/57324.84:.2f} "
+                f"j5={joint_positions.get('joint5',0)/57324.84:.2f} j6={joint_positions.get('joint6',0)/57324.84:.2f} rad"
+            )
+            self._last_cmd_debug_time = now
+        else:
+            self.get_logger().debug(
+                "Setting joint angles: "
+                + f"j1={joint_positions.get('joint1', 0)}, "
+                + f"j2={joint_positions.get('joint2', 0)}, "
+                + f"j3={joint_positions.get('joint3', 0)}, "
+                + f"j4={joint_positions.get('joint4', 0)}, "
+                + f"j5={joint_positions.get('joint5', 0)}, "
+                + f"j6={joint_positions.get('joint6', 0)}"
             )
 
-            # 夹爪控制
-            if self.gripper_exist:
-                if len(joint_data.effort) >= 7:
-                    gripper_effort = clip(joint_data.effort[6], 0.5, 3)
-                    # self.get_logger().info(f"gripper_effort: {gripper_effort}")
-                    if not math.isnan(gripper_effort):
-                        gripper_effort = round(gripper_effort * 1000)
-                    else:
-                        # self.get_logger().warning("Gripper effort is NaN, using default value.")
-                        gripper_effort = 0  # 设置默认值
-                    self.piper.GripperCtrl(abs(joint_6), gripper_effort, 0x01, 0)
-                else:
-                    self.piper.GripperCtrl(abs(joint_6), 1000, 0x01, 0)
+        # Now transmit the desired joint positions to the arm
+        self.piper.JointCtrl(
+            joint_positions.get('joint1', 0),
+            joint_positions.get('joint2', 0),
+            joint_positions.get('joint3', 0),
+            joint_positions.get('joint4', 0),
+            joint_positions.get('joint5', 0),
+            joint_positions.get('joint6', 0),
+        )
 
+        # Gripper control (7th joint)
+        if self.gripper_exist:
+            if len(joint_data.effort) >= 7:
+                gripper_effort = clip(joint_data.effort[6], 0.5, 3)
+                if not math.isnan(gripper_effort):
+                    gripper_effort = round(gripper_effort * 1000)
+                else:
+                    gripper_effort = 0
+                self.piper.GripperCtrl(abs(joint_6), gripper_effort, 0x01, 0)
+            else:
+                self.piper.GripperCtrl(abs(joint_6), 1000, 0x01, 0)
 
     def enable_callback(self, enable_flag: Bool):
         """Callback function for enabling the robotic arm
@@ -425,6 +473,8 @@ class PiperRosNode(Node):
                 loop_flag = True
                 break
 
+
+            self.get_logger().info(f"Sleeping for enable service")
             time.sleep(0.5)
 
         resp.enable_response = enable_flag
