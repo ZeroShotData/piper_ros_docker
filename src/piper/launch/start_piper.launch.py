@@ -113,7 +113,7 @@ def generate_launch_description():
         name='gello_launch_nodes',
         output='screen',
         log_cmd=True,
-        env={'PYTHONUNBUFFERED': '1'}
+        env={'PYTHONUNBUFFERED': '1', 'PYTHONPATH': '/PiperGello:${PYTHONPATH}'}
     )
 
     gello_run_env_proc = ExecuteProcess(
@@ -121,7 +121,7 @@ def generate_launch_description():
         name='gello_run_env',
         output='screen',
         log_cmd=True,
-        env={'PYTHONUNBUFFERED': '1'}
+        env={'PYTHONUNBUFFERED': '1', 'PYTHONPATH': '/PiperGello:${PYTHONPATH}'}
     )
 
     # -----------------------
