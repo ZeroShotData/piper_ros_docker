@@ -95,6 +95,18 @@ def generate_launch_description():
         ]
     )
 
+    gello_launch_nodes_proc = ExecuteProcess(
+        cmd=['python', '/PiperGello/experiments/launch_nodes.py', '--robot=piper', '--robot-ip=localhost', '--servo_host_port_pair=10.0.207.135:9876:9877'],
+        name='gello_launch_nodes',
+        output='screen'
+    )
+
+    gello_run_env_proc = ExecuteProcess(
+        cmd=['python', '/PiperGello/experiments/run_env.py', '--agent=gello', '--gello_port=/dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTA7NMKV-if00-port0'],
+        name='gello_run_env',
+        output='screen'
+    )
+
     # -----------------------
     # Launch description
     # -----------------------
@@ -112,4 +124,6 @@ def generate_launch_description():
         can_activate_proc,
         servo_node,
         piper_node,
+        gello_launch_nodes_proc,
+        gello_run_env_proc,
     ]) 

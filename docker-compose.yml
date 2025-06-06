@@ -15,6 +15,7 @@ services:
       - /sys/class/net:/sys/class/net:rw   # Add CAN interface access
       - /sys/devices:/sys/devices:rw       # USB/PCI devices
       - .:/app:rw  # Mount local repository for live development
+      - ../PiperGello:/PiperGello:rw  # Mount PiperGello repo
     privileged: true
     # Host networking mode allows:
     # - Direct access to CAN devices
