@@ -1,0 +1,148 @@
+# Dockerfile for AgileX Robotic Arm with ROS 2 Humble on AMD64
+
+# Use ROS 2 Humble base image that includes development tools
+FROM ros:humble-ros-base
+
+# ---------------------------------------------------------------
+# Install necessary system dependencies
+# ---------------------------------------------------------------
+RUN apt-get update && apt-get install -y \
+    python3-pip \
+    git \
+    build-essential \
+    python3-colcon-common-extensions \
+    ros-humble-ament-cmake \
+    ros-humble-ament-cmake-core \
+    ros-humble-ament-package \
+    ros-humble-ament-cmake-ros \
+    ros-humble-ament-cmake-export-dependencies \
+    ros-humble-ament-cmake-libraries \
+    ros-humble-ament-cmake-target-dependencies \
+    ros-humble-foxglove-bridge \
+    ros-humble-vision-opencv \
+    ros-humble-cv-bridge \
+    ros-humble-image-geometry \
+    ros-humble-topic-tools \
+    ros-humble-ros2-control \
+    ros-humble-ros2-controllers \
+    ros-humble-controller-manager \
+    ros-humble-joint-state-publisher-gui \
+    ros-humble-robot-state-publisher \
+    ros-humble-xacro \
+    ros-humble-moveit \
+    ros-humble-rosbridge-server \
+    chrony \
+    supervisor \
+    openssh-server \
+    ethtool \
+    can-utils \
+    iproute2 \
+    net-tools
+
+# ------------------------------------------------------------------
+# Chrony configuration – keep the container clock in sync
+# ------------------------------------------------------------------
+# Configure Chrony NTP synchronization
+# Create a configuration that:
+# 1. Uses pool.ntp.org for time synchronization
+# 2. Allows local network clients (10.0.207.0/24) 
+# 3. Steps clock on large initial offsets
+RUN echo '# Use public NTP servers from the pool.ntp.org project\n\
+pool pool.ntp.org iburst\n\
+\n\
+# Record the rate at which the system clock gains/loses time\n\
+driftfile /var/lib/chrony/drift\n\
+\n\
+# Allow NTP client access from local network\n\
+allow 10.0.207.0/24\n\
+\n\
+# Step the system clock if the offset is larger than 1 second during the first three updates\n\
+makestep 1.0 3' > /etc/chrony/chrony.conf
+
+# Install Python packages ----------------------------------------------------
+RUN pip3 install python-can piper_sdk scipy pyserial feetech-servo-sdk
+
+# Update rosdep (init is already done in base image)
+RUN rosdep update
+
+# Set working directory
+WORKDIR /app
+
+# Copy the entire repository into /app
+COPY . /app
+
+# Create ROS 2 workspace structure if it doesn't exist
+RUN mkdir -p /app/ros2_ws/src
+
+# Move ROS packages to the right location
+RUN if [ -d "/app/src/piper" ]; then \
+    cp -r /app/src/piper /app/ros2_ws/src/; \
+    fi && \
+    if [ -d "/app/src/piper_description" ]; then \
+    cp -r /app/src/piper_description /app/ros2_ws/src/; \
+    fi && \
+    if [ -d "/app/src/piper_msgs" ]; then \
+    cp -r /app/src/piper_msgs /app/ros2_ws/src/; \
+    fi && \
+    if [ -d "/app/src/piper_humble" ]; then \
+    cp -r /app/src/piper_humble /app/ros2_ws/src/; \
+    fi && \
+    if [ -d "/app/src/piper_moveit" ]; then \
+    cp -r /app/src/piper_moveit /app/ros2_ws/src/; \
+    fi && \
+    if [ -d "/app/src/piper_sim" ]; then \
+    cp -r /app/src/piper_sim /app/ros2_ws/src/; \
+    fi && \
+    if [ -d "/app/src/st3215_driver" ]; then \
+    cp -r /app/src/st3215_driver /app/ros2_ws/src/; \
+    fi
+
+# Set up environment ---------------------------------------------------------
+RUN echo "source /opt/ros/humble/setup.bash" >> ~/.bashrc && \
+    echo "source /opt/ros/humble/setup.bash" >> /root/.bashrc && \
+    echo "source /usr/share/colcon_cd/function/colcon_cd.sh" >> ~/.bashrc && \
+    echo "export _colcon_cd_root=/opt/ros/humble/" >> ~/.bashrc && \
+    mkdir -p /app/tmp && \
+    chmod -R 755 /app/tmp
+
+# Install package dependencies and build the workspace -----------------------
+RUN bash -c '\
+    source /opt/ros/humble/setup.bash && \
+    cd /app/ros2_ws && \
+    rosdep update --rosdistro humble && \
+    rosdep install --from-paths src --ignore-src -r -y \
+    --skip-keys="libpaho-mqtt-dev libpaho-mqttpp-dev warehouse_ros_mongo ros-humble-warehouse-ros-mongo" && \
+    colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release \
+'
+
+# Configure SSH on port 2222 --------------------------------------------------
+RUN echo 'root:1234' | chpasswd && \
+    sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config && \
+    sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
+    sed -i 's/#Port 22/Port 2222/' /etc/ssh/sshd_config && \
+    mkdir -p /var/run/sshd
+
+# Expose ports needed by the container ---------------------------------------
+EXPOSE 2222 8765 9090 123/udp
+
+# Configure Git and SSH for GitHub -------------------------------------------
+ENV GIT_USER_NAME="JulienRineau"
+ENV GIT_USER_EMAIL="julien.rineau@berkeley.edu"
+RUN git config --global user.name "$GIT_USER_NAME" && \
+    git config --global user.email "$GIT_USER_EMAIL" && \
+    mkdir -p /root/.ssh && \
+    ssh-keyscan github.com >> /root/.ssh/known_hosts
+
+# Source the ROS 2 setup scripts and add useful aliases ----------------------
+RUN echo "source /opt/ros/humble/setup.bash" >> ~/.bashrc && \
+    echo "source /app/ros2_ws/install/setup.bash" >> ~/.bashrc && \
+    echo "alias activate_can='bash /app/can_activate.sh can0 1000000'" >> ~/.bashrc && \
+    echo "alias start_piper='ros2 launch piper start_single_piper.launch.py'" >> ~/.bashrc && \
+    echo "alias start_piper_rviz='ros2 launch piper start_single_piper_rviz.launch.py'" >> ~/.bashrc && \
+    echo "alias start_piper_rosbridge='ros2 launch piper start_single_piper_rosbridge.launch.py'" >> ~/.bashrc
+
+# Supervisor -----------------------------------------------------------------
+RUN mv /app/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+
+# Start supervisord when the container starts --------------------------------
+CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"] 
