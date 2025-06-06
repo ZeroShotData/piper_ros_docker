@@ -69,6 +69,9 @@ RUN if [ -d "/app/src/piper" ]; then \
     fi && \
     if [ -d "/app/src/piper_sim" ]; then \
     cp -r /app/src/piper_sim /app/ros2_ws/src/; \
+    fi && \
+    if [ -d "/app/src/st3215_driver" ]; then \
+    cp -r /app/src/st3215_driver /app/ros2_ws/src/; \
     fi
 
 # Set up environment
@@ -88,6 +91,11 @@ RUN bash -c '\
     --skip-keys="libpaho-mqtt-dev libpaho-mqttpp-dev warehouse_ros_mongo ros-humble-warehouse-ros-mongo" && \
     colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release \
 '
+
+# Install requirements.txt
+RUN pip3 install -r /app/requirements.txt
+
+RUN apt-get update && apt-get install -y --no-install-recommends python3-serial && rm -rf /var/lib/apt/lists/*
 
 # Configure SSH on port 2222
 RUN echo 'root:1234' | chpasswd && \

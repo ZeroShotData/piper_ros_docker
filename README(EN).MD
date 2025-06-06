@@ -1,8 +1,14 @@
 # Standard setup for zeroshot arms
 
-bash can_activate.sh can0 1000000 "1-1.1:1.0" ( or whatever you see from bash find_all_can_port.sh)
+bash can_activate.sh can0 1000000 "1-1.1:1.0" 
+( or whatever you see from bash find_all_can_port.sh)
 
-
+ros2 run piper piper_single_ctrl --ros-args\
+	-p can_port:=can0\
+	-p auto_enable:=true\
+	-p gripper_exist:=false\
+	-p rviz_ctrl_flag:=false\
+	-p use_rosbridge:=true
 
 
 

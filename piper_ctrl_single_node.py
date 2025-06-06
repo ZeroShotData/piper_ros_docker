@@ -303,6 +303,7 @@ class PiperRosNode(Node):
                     self.get_logger().debug(f"vel_all: {vel_all}")
                     self.piper.MotionCtrl_2(0x01, 0x01, vel_all)
                 else:
+                    self.get_logger().debug(f"vel_all not given")
                     self.piper.MotionCtrl_2(0x01, 0x01, 30)
             else:
                 self.piper.MotionCtrl_2(0x01, 0x01, 30)

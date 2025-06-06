@@ -23,8 +23,22 @@ from rclpy.qos import qos_profile_sensor_data
 class PiperRosNode(Node):
     """ROS2 node for the robotic arm"""
 
-    def __init__(self) -> None:
-        super().__init__('piper_ctrl_single_node')
+    def __init__(self, node_name: str = 'piper_ctrl_single_node', namespace: str = None) -> None:
+        """Create a PiperRosNode instance.
+
+        Args:
+            node_name: Name of the node to register with the ROS graph. Defaults
+                to ``'piper_ctrl_single_node'`` so behaviour is unchanged when
+                used as a single-arm script.
+            namespace: Optional ROS namespace under which all topics and
+                services created by this node should live. When controlling
+                multiple arms from the same machine you can run two instances
+                of this class with e.g. ``namespace='arm1'`` and
+                ``namespace='arm2'`` – all their topics will then be
+                automatically isolated (``/arm1/joint_ctrl_single``,
+                ``/arm2/joint_ctrl_single`` …).
+        """
+        super().__init__(node_name, namespace=namespace)
         # ROS parameters
         self.declare_parameter('can_port', 'can0')
         self.declare_parameter('auto_enable', False)
@@ -97,6 +111,9 @@ class PiperRosNode(Node):
             )
             self.get_logger().info("Rosbridge server started")
 
+        # class-level, initialise with current pose or zeros
+        self._last_cmd = {f'joint{i}': 0 for i in range(1, 7)}
+
     def GetEnableFlag(self):
         # Debug: Print enable status when checked
         self.get_logger().debug(f"Enable flag checked, status: {self.__enable_flag}")
@@ -117,7 +134,7 @@ class PiperRosNode(Node):
         last_pose_debug_time = time.time()
         
         while rclpy.ok():
-            if(self.auto_enable):
+            if(self.auto_enable): 
                 while not (enable_flag):
                     elapsed_time = time.time() - start_time
                     enable_flag = self.piper.GetArmLowSpdInfoMsgs().motor_1.foc_status.driver_enable_status and \
@@ -208,6 +225,11 @@ class PiperRosNode(Node):
         vel_3: float = self.piper.GetArmHighSpdInfoMsgs().motor_4.motor_speed / 1000
         vel_4: float = self.piper.GetArmHighSpdInfoMsgs().motor_5.motor_speed / 1000
         vel_5: float = self.piper.GetArmHighSpdInfoMsgs().motor_6.motor_speed / 1000
+        # Gripper speed might not be reported at high rate; default to 0 if unavailable
+        try:
+            vel_6: float = self.piper.GetArmGripperMsgs().gripper_state.grippers_speed / 1000
+        except AttributeError:
+            vel_6 = 0.0
         effort_0:float = self.piper.GetArmHighSpdInfoMsgs().motor_1.effort/1000
         effort_1:float = self.piper.GetArmHighSpdInfoMsgs().motor_2.effort/1000
         effort_2:float = self.piper.GetArmHighSpdInfoMsgs().motor_3.effort/1000
@@ -216,7 +238,7 @@ class PiperRosNode(Node):
         effort_5:float = self.piper.GetArmHighSpdInfoMsgs().motor_6.effort/1000
         effort_6:float = self.piper.GetArmGripperMsgs().gripper_state.grippers_effort/1000
         self.joint_states.position = [joint_0,joint_1, joint_2, joint_3, joint_4, joint_5,joint_6]
-        self.joint_states.velocity = [vel_0, vel_1, vel_2, vel_3, vel_4, vel_5]
+        self.joint_states.velocity = [vel_0, vel_1, vel_2, vel_3, vel_4, vel_5, vel_6]
         self.joint_states.effort = [effort_0, effort_1, effort_2, effort_3, effort_4, effort_5, effort_6]
         # 发布所有消息
         self.joint_pub.publish(self.joint_states)
@@ -318,16 +340,8 @@ class PiperRosNode(Node):
 
         factor = 57324.840764  # 1000*180/3.14
 
-        joint_positions = {}
-        joint_6 = 0
-
         for idx, joint_name in enumerate(joint_data.name):
-            joint_positions[joint_name] = round(joint_data.position[idx] * factor)
-
-        # Gripper (7th joint)
-        if len(joint_data.position) >= 7:
-            joint_6 = round(joint_data.position[6] * 1000 * 1000)
-            joint_6 = joint_6 * self.gripper_val_mutiple
+            self._last_cmd[joint_name] = round(joint_data.position[idx] * factor)
 
         if not self.GetEnableFlag():
             return  # Robot not enabled – skip
@@ -354,8 +368,10 @@ class PiperRosNode(Node):
         if not all_zeros:
             if len(joint_data.velocity) == 7:
                 vel_all = clip(round(joint_data.velocity[6]), 1, 100)
+                self.get_logger().debug(f"vel_all: {vel_all}")
                 self.piper.MotionCtrl_2(0x01, 0x01, vel_all, 0xAD)
             else:
+                self.get_logger().debug(f"vel_all not given")
                 self.piper.MotionCtrl_2(0x01, 0x01, 30, 0xAD)
         else:
             self.piper.MotionCtrl_2(0x01, 0x01, 30, 0xAD)
@@ -366,30 +382,30 @@ class PiperRosNode(Node):
             self._last_cmd_debug_time = 0.0
         if now - self._last_cmd_debug_time > 1.0:
             self.get_logger().info(
-                f"Joint cmd: j1={joint_positions.get('joint1',0)/57324.84:.2f} j2={joint_positions.get('joint2',0)/57324.84:.2f} "
-                f"j3={joint_positions.get('joint3',0)/57324.84:.2f} j4={joint_positions.get('joint4',0)/57324.84:.2f} "
-                f"j5={joint_positions.get('joint5',0)/57324.84:.2f} j6={joint_positions.get('joint6',0)/57324.84:.2f} rad"
+                f"Joint cmd: j1={self._last_cmd['joint1']/57324.84:.2f} j2={self._last_cmd['joint2']/57324.84:.2f} "
+                f"j3={self._last_cmd['joint3']/57324.84:.2f} j4={self._last_cmd['joint4']/57324.84:.2f} "
+                f"j5={self._last_cmd['joint5']/57324.84:.2f} j6={self._last_cmd['joint6']/57324.84:.2f} rad"
             )
             self._last_cmd_debug_time = now
         else:
             self.get_logger().debug(
                 "Setting joint angles: "
-                + f"j1={joint_positions.get('joint1', 0)}, "
-                + f"j2={joint_positions.get('joint2', 0)}, "
-                + f"j3={joint_positions.get('joint3', 0)}, "
-                + f"j4={joint_positions.get('joint4', 0)}, "
-                + f"j5={joint_positions.get('joint5', 0)}, "
-                + f"j6={joint_positions.get('joint6', 0)}"
+                + f"j1={self._last_cmd['joint1']}, "
+                + f"j2={self._last_cmd['joint2']}, "
+                + f"j3={self._last_cmd['joint3']}, "
+                + f"j4={self._last_cmd['joint4']}, "
+                + f"j5={self._last_cmd['joint5']}, "
+                + f"j6={self._last_cmd['joint6']}"
             )
 
         # Now transmit the desired joint positions to the arm
         self.piper.JointCtrl(
-            joint_positions.get('joint1', 0),
-            joint_positions.get('joint2', 0),
-            joint_positions.get('joint3', 0),
-            joint_positions.get('joint4', 0),
-            joint_positions.get('joint5', 0),
-            joint_positions.get('joint6', 0),
+            self._last_cmd['joint1'],
+            self._last_cmd['joint2'],
+            self._last_cmd['joint3'],
+            self._last_cmd['joint4'],
+            self._last_cmd['joint5'],
+            self._last_cmd['joint6'],
         )
 
         # Gripper control (7th joint)
@@ -400,9 +416,9 @@ class PiperRosNode(Node):
                     gripper_effort = round(gripper_effort * 1000)
                 else:
                     gripper_effort = 0
-                self.piper.GripperCtrl(abs(joint_6), gripper_effort, 0x01, 0)
+                self.piper.GripperCtrl(abs(self._last_cmd['joint6']), gripper_effort, 0x01, 0)
             else:
-                self.piper.GripperCtrl(abs(joint_6), 1000, 0x01, 0)
+                self.piper.GripperCtrl(abs(self._last_cmd['joint6']), 1000, 0x01, 0)
 
     def enable_callback(self, enable_flag: Bool):
         """Callback function for enabling the robotic arm
