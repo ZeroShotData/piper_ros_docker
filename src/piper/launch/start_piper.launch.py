@@ -121,13 +121,17 @@ def generate_launch_description():
     gello_launch_nodes_proc = ExecuteProcess(
         cmd=['bash', '-c', launch_nodes_cmd],
         name='gello_launch_nodes',
-        output='screen'
+        output='screen',
+        log_cmd=True,
+        env={'PYTHONUNBUFFERED': '1'}
     )
 
     gello_run_env_proc = ExecuteProcess(
         cmd=['bash', '-c', run_env_cmd],
         name='gello_run_env',
-        output='screen'
+        output='screen',
+        log_cmd=True,
+        env={'PYTHONUNBUFFERED': '1'}
     )
 
     # -----------------------
