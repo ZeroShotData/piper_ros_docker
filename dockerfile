@@ -6,6 +6,7 @@ FROM ros:humble-ros-base
 # Install necessary system dependencies
 RUN apt-get update && apt-get install -y \
     python3-pip \
+    python3-venv \
     git \
     build-essential \
     python3-colcon-common-extensions \

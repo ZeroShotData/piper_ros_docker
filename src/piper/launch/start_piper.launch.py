@@ -95,14 +95,37 @@ def generate_launch_description():
         ]
     )
 
+    # Helper bash command to activate / create venv and run python script
+    launch_nodes_cmd = (
+        'if [ ! -f /PiperGello/.venv/bin/activate ]; then '
+        'python3 -m venv /PiperGello/.venv && '
+        'source /PiperGello/.venv/bin/activate && '
+        'pip install -q -r /PiperGello/requirements.txt; '
+        'else source /PiperGello/.venv/bin/activate; fi && '
+        'exec python /PiperGello/experiments/launch_nodes.py '
+        '--robot=piper --robot-ip=localhost '
+        '--servo_host_port_pair=10.0.207.135:9876:9877'
+    )
+
+    run_env_cmd = (
+        'if [ ! -f /PiperGello/.venv/bin/activate ]; then '
+        'python3 -m venv /PiperGello/.venv && '
+        'source /PiperGello/.venv/bin/activate && '
+        'pip install -q -r /PiperGello/requirements.txt; '
+        'else source /PiperGello/.venv/bin/activate; fi && '
+        'exec python /PiperGello/experiments/run_env.py '
+        '--agent=gello '
+        '--gello_port=/dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTA7NMKV-if00-port0'
+    )
+
     gello_launch_nodes_proc = ExecuteProcess(
-        cmd=['python', '/PiperGello/experiments/launch_nodes.py', '--robot=piper', '--robot-ip=localhost', '--servo_host_port_pair=10.0.207.135:9876:9877'],
+        cmd=['bash', '-c', launch_nodes_cmd],
         name='gello_launch_nodes',
         output='screen'
     )
 
     gello_run_env_proc = ExecuteProcess(
-        cmd=['python', '/PiperGello/experiments/run_env.py', '--agent=gello', '--gello_port=/dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTA7NMKV-if00-port0'],
+        cmd=['bash', '-c', run_env_cmd],
         name='gello_run_env',
         output='screen'
     )
