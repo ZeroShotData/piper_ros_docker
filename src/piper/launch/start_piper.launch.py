@@ -1,6 +1,6 @@
 from launch import LaunchDescription
 from launch_ros.actions import Node
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, ExecuteProcess
 from launch.substitutions import LaunchConfiguration
 from launch.conditions import UnlessCondition
 
@@ -61,6 +61,13 @@ def generate_launch_description():
     # -----------------------
     # Nodes
     # -----------------------
+    # CAN interface activation process
+    can_activate_proc = ExecuteProcess(
+        cmd=['bash', '/app/can_activate.sh', 'can0', '1000000', '1-1.1:1.0'],
+        name='activate_can',
+        output='screen'
+    )
+
     servo_node = Node(
         package='st3215_driver',
         executable='st3215_servo',
@@ -102,6 +109,7 @@ def generate_launch_description():
         device_arg,
         no_servo_arg,
         # nodes
+        can_activate_proc,
         servo_node,
         piper_node,
     ]) 
