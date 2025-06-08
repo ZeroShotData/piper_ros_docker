@@ -2,7 +2,7 @@ from launch import LaunchDescription
 from launch_ros.actions import Node
 from launch.actions import DeclareLaunchArgument, ExecuteProcess
 from launch.substitutions import LaunchConfiguration
-from launch.conditions import UnlessCondition
+from launch.conditions import IfCondition
 import os
 
 
@@ -53,12 +53,6 @@ def generate_launch_description():
         description='Serial device for the ST3215 servo driver.'
     )
 
-    no_servo_arg = DeclareLaunchArgument(
-        'no_servo',
-        default_value='false',
-        description='Set to true to skip launching the servo driver.'
-    )
-
     # -----------------------
     # Nodes
     # -----------------------
@@ -90,7 +84,7 @@ def generate_launch_description():
         name='st3215_servo',
         output='screen',
         parameters=[{'device': LaunchConfiguration('device')}],
-        condition=UnlessCondition(LaunchConfiguration('no_servo'))
+        condition=IfCondition(LaunchConfiguration('gripper_exist'))
     )
 
     piper_node = Node(
@@ -139,7 +133,6 @@ def generate_launch_description():
                 env={
                     'PYTHONUNBUFFERED': '1',
                     'PYTHONPATH': f'{_gello_dir}:${{PYTHONPATH}}',
-                    'NO_SERVO': LaunchConfiguration('no_servo'),
                 }
             )
 
@@ -166,7 +159,6 @@ def generate_launch_description():
         rviz_ctrl_flag_arg,
         use_rosbridge_arg,
         device_arg,
-        no_servo_arg,
         # nodes
         can_activate_proc,
         create_serial_link,
