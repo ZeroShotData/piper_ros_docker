@@ -38,7 +38,7 @@ RUN apt-get update && apt-get install -y \
     net-tools
 
 # Install Python packages
-RUN pip3 install python-can piper_sdk scipy tyro
+RUN pip3 install python-can piper_sdk scipy tyro pandas pyzmq roslibpy pyquaternion dynamixel_sdk pyarrow fastparquet
 
 # Update rosdep (init is already done in base image)
 RUN rosdep update
