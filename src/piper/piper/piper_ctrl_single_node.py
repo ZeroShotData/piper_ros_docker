@@ -18,6 +18,7 @@ from scipy.spatial.transform import Rotation as R  # For Euler angle to quaterni
 from numpy import clip
 import subprocess
 from rclpy.qos import qos_profile_sensor_data
+import rclpy.logging
 
 
 class PiperRosNode(Node):
@@ -61,6 +62,8 @@ class PiperRosNode(Node):
         self.get_logger().info(f"gripper_val_mutiple is {self.gripper_val_mutiple}")
         self.get_logger().info(f"rviz_ctrl_flag is {self.rviz_ctrl_flag}")
         self.get_logger().info(f"use_rosbridge is {self.use_rosbridge}")
+        # keep console quiet to avoid timing stalls
+        self.get_logger().set_level(rclpy.logging.LoggingSeverity.WARN)
         # Publishers
         self.joint_pub = self.create_publisher(JointState, 'joint_states_single', 1)
         self.joint_ctrl_pub = self.create_publisher(JointState, 'joint_ctrl', 1)
@@ -122,7 +125,7 @@ class PiperRosNode(Node):
     def publish_thread(self):
         """Publish messages from the robotic arm
         """
-        rate = self.create_rate(200)  # 200 Hz
+        rate = self.create_rate(100)  # 100 Hz
         enable_flag = False
         # Set timeout (seconds)
         timeout = 5
