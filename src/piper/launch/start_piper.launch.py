@@ -100,6 +100,7 @@ def generate_launch_description():
             'rviz_ctrl_flag': LaunchConfiguration('rviz_ctrl_flag'),
             'use_rosbridge': LaunchConfiguration('use_rosbridge'),
         }],
+        remappings=[('joint_states_single', 'joint_ctrl_single')],
     )
 
     # -----------------------
