@@ -40,6 +40,12 @@ def generate_launch_description():
         description='Scalar applied to gripper values.'
     )
 
+    disable_gripper_auto_move_arg = DeclareLaunchArgument(
+        'disable_gripper_auto_move',
+        default_value='true',
+        description='Prevent gripper from moving to zero at startup.'
+    )
+
     use_rosbridge_arg = DeclareLaunchArgument(
         'use_rosbridge',
         default_value='true',
@@ -49,7 +55,7 @@ def generate_launch_description():
     # Servo specific args
     device_arg = DeclareLaunchArgument(
         'device',
-        default_value='/dev/ttyACM0',
+        default_value='/dev/ttyUSB0',
         description='Serial device for the ST3215 servo driver.'
     )
 
@@ -97,6 +103,7 @@ def generate_launch_description():
             'auto_enable': LaunchConfiguration('auto_enable'),
             'gripper_val_mutiple': LaunchConfiguration('gripper_val_mutiple'),
             'gripper_exist': LaunchConfiguration('gripper_exist'),
+            'disable_gripper_auto_move': LaunchConfiguration('disable_gripper_auto_move'),
             'rviz_ctrl_flag': LaunchConfiguration('rviz_ctrl_flag'),
             'use_rosbridge': LaunchConfiguration('use_rosbridge'),
         }],
@@ -134,6 +141,7 @@ def generate_launch_description():
                 env={
                     'PYTHONUNBUFFERED': '1',
                     'PYTHONPATH': f'{_gello_dir}:${{PYTHONPATH}}',
+                    'DISABLE_GRIPPER_AUTO_MOVE': 'true',
                 }
             )
 
@@ -142,7 +150,8 @@ def generate_launch_description():
                 name='gello_run_env',
                 output='screen',
                 log_cmd=True,
-                env={'PYTHONUNBUFFERED': '1', 'PYTHONPATH': f'{_gello_dir}:${{PYTHONPATH}}'}
+                env={'PYTHONUNBUFFERED': '1', 'PYTHONPATH': f'{_gello_dir}:${{PYTHONPATH}}',
+                     'DISABLE_GRIPPER_AUTO_MOVE': 'true'},
             )
 
             gello_entities.extend([gello_launch_nodes_proc, gello_run_env_proc])
@@ -157,6 +166,7 @@ def generate_launch_description():
         auto_enable_arg,
         gripper_exist_arg,
         gripper_val_mutiple_arg,
+        disable_gripper_auto_move_arg,
         rviz_ctrl_flag_arg,
         use_rosbridge_arg,
         device_arg,
