@@ -33,6 +33,10 @@ class ST3215Driver(Node):
     def __init__(self):
         super().__init__('st3215_driver')
 
+        # Declare parameters
+        self.declare_parameter('device', DEVICE)
+        device_path = self.get_parameter('device').get_parameter_value().string_value
+
         # ROS interfaces
         self.cmd_sub  = self.create_subscription(
             Int32, 'servo/command_raw', self.cmd_cb, 10)
@@ -46,10 +50,10 @@ class ST3215Driver(Node):
             SetBool, 'servo/torque_enable', self.torque_cb)
 
         # Feetech SDK
-        self.port = PortHandler(DEVICE)
+        self.port = PortHandler(device_path)
         self.pkt  = PacketHandler(PROTOCOL_END)
         if not self.port.openPort():
-            self.get_logger().fatal(f'Cannot open {DEVICE}')
+            self.get_logger().fatal(f'Cannot open {device_path}')
             raise SystemExit
         if not self.port.setBaudRate(BAUDRATE):
             self.get_logger().fatal(f'Cannot set baud {BAUDRATE}')
