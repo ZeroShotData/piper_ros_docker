@@ -4,7 +4,7 @@
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
-from std_msgs.msg import Bool
+from std_msgs.msg import Bool, Int32
 import time
 import threading
 import argparse
@@ -69,6 +69,8 @@ class PiperRosNode(Node):
         self.joint_ctrl_pub = self.create_publisher(JointState, 'joint_ctrl', 1)
         self.arm_status_pub = self.create_publisher(PiperStatusMsg, 'arm_status', 1)
         self.end_pose_pub = self.create_publisher(Pose, 'end_pose', 1)
+        # Publisher for ST3215 servo
+        self.servo_cmd_pub = self.create_publisher(Int32, 'servo/command_raw', 1)
         # Service
         self.motor_srv = self.create_service(Enable, 'enable_srv', self.handle_enable_service)
         # Joint
@@ -412,7 +414,30 @@ class PiperRosNode(Node):
         )
 
         # Gripper control (7th joint)
-        if self.gripper_exist:
+        if self.gripper_exist and len(joint_data.position) >= 7:
+            # Convert gripper value (0-1) to servo ticks
+            # Assuming open=1592 ticks, close=842 ticks (from calibration)
+            SERVO_OPEN_TICKS = 1592
+            SERVO_CLOSE_TICKS = 842
+            
+            # joint_data.position[6] is in range 0-1 (normalized gripper value)
+            gripper_normalized = joint_data.position[6]
+            
+            # Debug logging
+            self.get_logger().info(f"Gripper normalized value: {gripper_normalized}")
+            
+            # Map 0-1 to servo ticks (0=open, 1=closed)
+            # Correct mapping: 0 -> OPEN, 1 -> CLOSE
+            servo_ticks = int(SERVO_OPEN_TICKS - (SERVO_OPEN_TICKS - SERVO_CLOSE_TICKS) * gripper_normalized)
+            
+            self.get_logger().info(f"Publishing servo ticks: {servo_ticks}")
+            
+            # Publish to servo
+            servo_msg = Int32()
+            servo_msg.data = servo_ticks
+            self.servo_cmd_pub.publish(servo_msg)
+            
+            # Also use the CAN gripper if available (for compatibility)
             if len(joint_data.effort) >= 7:
                 gripper_effort = clip(joint_data.effort[6], 0.5, 3)
                 if not math.isnan(gripper_effort):
