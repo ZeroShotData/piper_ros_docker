@@ -1,0 +1,45 @@
+CREATE
+Detailed changes for "Plan: Modify piper ROS stack for dataset replay"
+====================================================================
+
+1. src/piper/launch/start_piper.launch.py
+   ------------------------------------------------
+   • Added new launch argument `gello_exist` (default "true").
+   • Changed `gripper_exist` default to "true" (auto-disabled later).
+   • Inserted `OpaqueFunction` (`sync_gripper_with_gello`) that forces
+     ─ `gripper_exist:=false` and `use_rosbridge:=false` when
+       `gello_exist:=false`.
+   • Wrapped every Gello-related `ExecuteProcess` with
+     `condition=IfCondition(LaunchConfiguration('gello_exist'))`.
+   • Added unconditional runtime guard process:
+       `ExecuteProcess(cmd=['python3', '-m', 'piper.single_publisher_guard_node'])`.
+   • Updated final `LaunchDescription` list to include new argument,
+     flag-sync helper, guard process, and preserved node order.
+
+2. src/piper/piper/single_publisher_guard_node.py
+   ------------------------------------------------
+   • NEW file – lightweight ROS2 node that checks publisher count on
+     `/joint_ctrl_single` every second. Exits with error if >1.
+
+3. README.MD  (Chinese)
+   ------------------------------------------------
+   • Added section "2.2.2 数据集回放 (Dataset replay)" describing
+     `gello_exist` flag, behaviour, and replay example.
+   • Added "常用调试命令" block with CAN bring-up, launch examples,
+     serial listing, dataset record, and kill command.
+
+4. README(EN).MD  (English)
+   ------------------------------------------------
+   • Added section "2.2.2 Dataset replay (disable Gello bridge)" with
+     `gello_exist` launch example, behaviour notes, and replay snippet.
+   • Added "Handy troubleshooting commands" block mirroring Chinese
+     version in English.
+
+5. Git commits
+   ------------------------------------------------
+   • a930452  Add gello_exist flag, auto disable gripper, include joint publisher guard
+   • <pending> Add dataset replay instructions and troubleshooting commands in English README
+
+These changes collectively enable Piper to run without the Gello bridge
+for dataset replay while safeguarding against multiple publishers and
+provide updated documentation for both CN & EN users. 
