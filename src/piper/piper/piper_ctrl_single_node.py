@@ -416,9 +416,9 @@ class PiperRosNode(Node):
         # Gripper control (7th joint)
         if self.gripper_exist and len(joint_data.position) >= 7:
             # Convert gripper value (0-1) to servo ticks
-            # Assuming open=1592 ticks, close=842 ticks (from calibration)
+            # Assuming open=1592 ticks, close=900 ticks (from calibration)
             SERVO_OPEN_TICKS = 1592
-            SERVO_CLOSE_TICKS = 842
+            SERVO_CLOSE_TICKS = 900
             
             # joint_data.position[6] is in range 0-1 (normalized gripper value)
             gripper_normalized = joint_data.position[6]

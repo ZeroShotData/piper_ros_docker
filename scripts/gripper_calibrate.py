@@ -47,7 +47,7 @@ except ImportError:
 
 # ST3215 servo constants
 DEFAULT_SERVO_ID = 6
-DEFAULT_DEVICE = "/dev/ttyACM0"  # Common for ST3215 on Piper
+DEFAULT_DEVICE = "/dev/ttyACM1"  # Common for ST3215 on Piper
 BAUDRATE = 1_000_000
 PROTOCOL_END = 0  # ST3215 uses protocol 0
 
@@ -58,7 +58,7 @@ TORQUE_ENABLE = 40   # Torque enable register
 
 # Default positions from PiperGello (current calibrated values)
 DEFAULT_OPEN = 1592   # Gripper open when Gello trigger not pressed
-DEFAULT_CLOSE = 842   # Gripper closed when Gello trigger pressed
+DEFAULT_CLOSE = 900   # Gripper closed when Gello trigger pressed
 
 # Movement limits
 MIN_POSITION = 0
@@ -285,10 +285,10 @@ Examples:
         print()
         print("3. Restart the robot:")
         print("   docker exec -it piper bash -c \"pkill -f python3\"")
-        print("   docker exec -it piper bash -c \"source /opt/ros/humble/setup.bash && \\")
+        print(f"   docker exec -it piper bash -c \"source /opt/ros/humble/setup.bash && \\")
         print("                                   source /app/install/setup.bash && \\")
         print("                                   ros2 launch piper start_piper.launch.py \\")
-        print("                                   gripper_exist:=true device=/dev/ttyACM0\"")
+        print(f"                                   gripper_exist:=true device={args.device}\"")
         print("="*60)
         
     except Exception as e:
