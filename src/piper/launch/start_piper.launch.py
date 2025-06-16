@@ -1,6 +1,6 @@
 from launch import LaunchDescription
 from launch_ros.actions import Node
-from launch.actions import DeclareLaunchArgument, ExecuteProcess
+from launch.actions import DeclareLaunchArgument, ExecuteProcess, OpaqueFunction
 from launch.substitutions import LaunchConfiguration
 from launch.conditions import IfCondition
 import os
@@ -28,9 +28,15 @@ def generate_launch_description():
         description='Launch rviz visualisation.'
     )
 
+    gello_exist_arg = DeclareLaunchArgument(
+        'gello_exist',
+        default_value='true',
+        description='Whether the Gello bridge is running.'
+    )
+
     gripper_exist_arg = DeclareLaunchArgument(
         'gripper_exist',
-        default_value='false',
+        default_value='true',
         description='Whether a gripper is attached.'
     )
 
@@ -138,6 +144,7 @@ def generate_launch_description():
                 name='gello_launch_nodes',
                 output='screen',
                 log_cmd=True,
+                condition=IfCondition(LaunchConfiguration('gello_exist')),
                 env={
                     'PYTHONUNBUFFERED': '1',
                     'PYTHONPATH': f'{_gello_dir}:${{PYTHONPATH}}',
@@ -150,6 +157,7 @@ def generate_launch_description():
                 name='gello_run_env',
                 output='screen',
                 log_cmd=True,
+                condition=IfCondition(LaunchConfiguration('gello_exist')),
                 env={'PYTHONUNBUFFERED': '1', 'PYTHONPATH': f'{_gello_dir}:${{PYTHONPATH}}',
                      'DISABLE_GRIPPER_AUTO_MOVE': 'true'},
             )
@@ -158,10 +166,34 @@ def generate_launch_description():
             break  # Found valid Gello dir, no need to search further
 
     # -----------------------
+    # Helper: keep gripper flag consistent with gello flag
+    # -----------------------
+    def sync_gripper_with_gello(context, *args, **kwargs):
+        if context.launch_configurations.get('gello_exist', 'true').lower() == 'false':
+            # Force gripper to be disabled when gello bridge is disabled
+            context.launch_configurations['gripper_exist'] = 'false'
+            # Also turn off rosbridge unless the user explicitly overrides later
+            if context.launch_configurations.get('use_rosbridge', 'true').lower() != 'false':
+                context.launch_configurations['use_rosbridge'] = 'false'
+        return []
+
+    sync_flags = OpaqueFunction(function=sync_gripper_with_gello)
+
+    # -----------------------
+    # Runtime safety guard – always included
+    # -----------------------
+    pub_guard_proc = ExecuteProcess(
+        cmd=['python3', '-m', 'piper.single_publisher_guard_node'],
+        name='single_pub_guard',
+        output='screen'
+    )
+
+    # -----------------------
     # Launch description
     # -----------------------
     return LaunchDescription([
         # arguments
+        gello_exist_arg,
         can_port_arg,
         auto_enable_arg,
         gripper_exist_arg,
@@ -170,11 +202,14 @@ def generate_launch_description():
         rviz_ctrl_flag_arg,
         use_rosbridge_arg,
         device_arg,
+        # flag sync helper (must run before nodes)
+        sync_flags,
         # nodes
         can_activate_proc,
         create_serial_link,
         servo_node,
         piper_node,
+        pub_guard_proc,
         # Optional helpers (only added if scripts exist)
         *gello_entities,
     ]) 
