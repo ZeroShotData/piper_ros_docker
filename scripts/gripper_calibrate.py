@@ -69,16 +69,16 @@ HELP_MSG = """
 ║           ST3215 Gripper Calibration Tool                  ║
 ╠════════════════════════════════════════════════════════════╣
 ║ Movement Controls:                                         ║
-║   ← / a : Move gripper -10 ticks (more towards open)      ║
-║   → / d : Move gripper +10 ticks (more towards closed)    ║
-║   ↓ / s : Move gripper -50 ticks (big step open)         ║
-║   ↑ / w : Move gripper +50 ticks (big step close)        ║
+║   ← / a : Move gripper -10 ticks (more towards open)       ║
+║   → / d : Move gripper +10 ticks (more towards closed)     ║
+║   ↓ / s : Move gripper -50 ticks (big step open)           ║
+║   ↑ / w : Move gripper +50 ticks (big step close)          ║
 ║                                                            ║
 ║ Position Testing:                                          ║
 ║   o     : Jump to current OPEN position                    ║
 ║   c     : Jump to current CLOSE position                   ║
 ║   m     : Go to middle position                            ║
-║   space : Toggle between open and close positions         ║
+║   space : Toggle between open and close positions          ║
 ║                                                            ║
 ║ Calibration:                                               ║
 ║   [     : Set current position as OPEN                     ║
@@ -86,7 +86,7 @@ HELP_MSG = """
 ║                                                            ║
 ║ Other:                                                     ║
 ║   r     : Reset to default values                          ║
-║   q     : Quit and show results                           ║
+║   q     : Quit and show results                            ║
 ║   h/?   : Show this help                                   ║
 ╚════════════════════════════════════════════════════════════╝
 
