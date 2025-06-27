@@ -1,6 +1,6 @@
 from launch import LaunchDescription
 from launch_ros.actions import Node
-from launch.actions import DeclareLaunchArgument, ExecuteProcess, OpaqueFunction
+from launch.actions import DeclareLaunchArgument, ExecuteProcess, OpaqueFunction, TimerAction
 from launch.substitutions import LaunchConfiguration
 from launch.conditions import IfCondition
 import os
@@ -58,11 +58,10 @@ def generate_launch_description():
         description='Start rosbridge server for remote access.'
     )
 
-    # Servo specific args
-    device_arg = DeclareLaunchArgument(
-        'device',
-        default_value='/dev/ttyUSB0',
-        description='Serial device for the ST3215 servo driver.'
+    # Gripper YAML configuration (required, no default)
+    gripper_config_arg = DeclareLaunchArgument(
+        'gripper_config',
+        description='Absolute path to gripper YAML configuration.'
     )
 
     # -----------------------
@@ -90,12 +89,22 @@ def generate_launch_description():
         ]
     )
 
+    # Loader node – validates YAML and publishes parameters
+    loader_node = Node(
+        package='gripper_config_loader',
+        executable='gripper_config_loader',
+        name='gripper_config_loader',
+        output='screen',
+        parameters=[{'gripper_config': LaunchConfiguration('gripper_config'),
+                     'gello_exist': LaunchConfiguration('gello_exist')}])
+
     servo_node = Node(
         package='st3215_driver',
         executable='st3215_servo',
         name='st3215_servo',
         output='screen',
-        parameters=[{'device': LaunchConfiguration('device')}],
+        # Rely on parameters published by loader_node – no CLI defaults
+        parameters=[],
         condition=IfCondition(LaunchConfiguration('gripper_exist'))
     )
 
@@ -165,6 +174,17 @@ def generate_launch_description():
             gello_entities.extend([gello_launch_nodes_proc, gello_run_env_proc])
             break  # Found valid Gello dir, no need to search further
 
+    # Wrap Gello entities in TimerAction to delay startup until rosbridge is ready
+    if gello_entities:
+        delayed_gello_entities = [
+            TimerAction(
+                period=3.0,  # 3 second delay
+                actions=gello_entities
+            )
+        ]
+    else:
+        delayed_gello_entities = []
+
     # -----------------------
     # Helper: keep gripper flag consistent with gello flag
     # -----------------------
@@ -201,15 +221,16 @@ def generate_launch_description():
         disable_gripper_auto_move_arg,
         rviz_ctrl_flag_arg,
         use_rosbridge_arg,
-        device_arg,
+        gripper_config_arg,
         # flag sync helper (must run before nodes)
         sync_flags,
         # nodes
         can_activate_proc,
         create_serial_link,
+        loader_node,
         servo_node,
         piper_node,
         pub_guard_proc,
         # Optional helpers (only added if scripts exist)
-        *gello_entities,
+        *delayed_gello_entities,
     ]) 

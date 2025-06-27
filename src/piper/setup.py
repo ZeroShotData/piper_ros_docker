@@ -30,6 +30,7 @@ setup(
             'piper_single_ctrl = piper.piper_ctrl_single_node:main',
             'piper_ms_ctrl = piper.piper_start_ms_node:main',
             'piper_read_master = piper.piper_read_master_node:main',
+            'piper_replay_logger = piper.replay_test_logger:main',
         ],
     },
 )

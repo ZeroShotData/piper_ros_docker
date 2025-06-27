@@ -32,10 +32,11 @@ License: MIT
 
 import argparse
 import sys
-import termios
-import tty
 import time
 import os
+import select
+import termios
+import tty
 
 try:
     from scservo_sdk import PortHandler, PacketHandler, COMM_SUCCESS
@@ -47,7 +48,7 @@ except ImportError:
 
 # ST3215 servo constants
 DEFAULT_SERVO_ID = 6
-DEFAULT_DEVICE = "/dev/ttyACM1"  # Common for ST3215 on Piper
+DEFAULT_DEVICE = "/dev/ttyACM0"  # Common for ST3215 on Piper
 BAUDRATE = 1_000_000
 PROTOCOL_END = 0  # ST3215 uses protocol 0
 
@@ -96,30 +97,31 @@ Current defaults:
 """.format(DEFAULT_OPEN, DEFAULT_CLOSE)
 
 
-class KeyReader:
-    """Context manager for reading single keystrokes"""
-    def __enter__(self):
-        self.fd = sys.stdin.fileno()
-        self.old_settings = termios.tcgetattr(self.fd)
-        tty.setraw(self.fd)
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        termios.tcsetattr(self.fd, termios.TCSADRAIN, self.old_settings)
-
-    def read_key(self):
-        """Read a single key press and handle arrow keys"""
-        ch = sys.stdin.read(1)
-        # Handle escape sequences (arrow keys)
-        if ch == '\x1b':
+def get_single_char():
+    """Get a single character from stdin using non-blocking input."""
+    fd = sys.stdin.fileno()
+    old_settings = termios.tcgetattr(fd)
+    try:
+        tty.setcbreak(fd)  # Use cbreak mode instead of raw mode
+        
+        # Check if input is available
+        if select.select([sys.stdin], [], [], 0)[0]:
             ch = sys.stdin.read(1)
-            if ch == '[':
-                ch = sys.stdin.read(1)
-                if ch == 'A': return 'w'  # up arrow
-                elif ch == 'B': return 's'  # down arrow
-                elif ch == 'C': return 'd'  # right arrow
-                elif ch == 'D': return 'a'  # left arrow
-        return ch.lower()
+            # Handle arrow keys
+            if ch == '\x1b':
+                if select.select([sys.stdin], [], [], 0.1)[0]:
+                    ch2 = sys.stdin.read(1)
+                    if ch2 == '[':
+                        if select.select([sys.stdin], [], [], 0.1)[0]:
+                            ch3 = sys.stdin.read(1)
+                            if ch3 == 'A': return 'w'  # up arrow
+                            elif ch3 == 'B': return 's'  # down arrow
+                            elif ch3 == 'C': return 'd'  # right arrow
+                            elif ch3 == 'D': return 'a'  # left arrow
+            return ch.lower()
+        return None
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
 
 def connect_servo(device, servo_id):
@@ -199,70 +201,77 @@ Examples:
         print("="*60)
         print("\nPress 'h' for help\n")
         
-        with KeyReader() as reader:
-            while True:
-                key = reader.read_key()
+        print(f"Position: {current_pos:4d} (Open:{test_open:4d} Close:{test_close:4d})", end='\r', flush=True)
+        
+        while True:
+            key = get_single_char()
+            
+            if key is None:
+                time.sleep(0.01)  # Small sleep to prevent CPU spinning
+                continue
                 
-                if key == 'q':
-                    break
-                elif key in ('h', '?'):
-                    print(HELP_MSG)
-                    continue
-                
-                # Movement commands
-                delta = 0
-                new_pos = current_pos
-                
-                if key in ('a', 'A'):  # left arrow - towards open
-                    delta = -10
-                elif key in ('d', 'D'):  # right arrow - towards close
-                    delta = +10
-                elif key in ('s', 'S'):  # down arrow - big open
-                    delta = -50
-                elif key in ('w', 'W'):  # up arrow - big close
-                    delta = +50
-                elif key == 'o':  # go to open position
-                    new_pos = test_open
-                    print(f"\n➡️  Testing OPEN position: {test_open} ticks")
-                elif key == 'c':  # go to close position
-                    new_pos = test_close
-                    print(f"\n➡️  Testing CLOSE position: {test_close} ticks")
-                elif key == 'm':  # middle position
-                    new_pos = (test_open + test_close) // 2
-                    print(f"\n➡️  Going to middle: {new_pos} ticks")
-                elif key == ' ':  # space - toggle
-                    new_pos = test_close if last_toggle == test_open else test_open
-                    last_toggle = new_pos
-                    print(f"\n🔄 Toggle to {'CLOSE' if new_pos == test_close else 'OPEN'}: {new_pos}")
-                elif key == '[':  # set as open position
-                    test_open = current_pos
-                    print(f"\n✅ Set OPEN position: {test_open} ticks")
-                elif key == ']':  # set as close position
-                    test_close = current_pos
-                    print(f"\n✅ Set CLOSE position: {test_close} ticks")
-                elif key == 'r':  # reset to defaults
-                    test_open = DEFAULT_OPEN
-                    test_close = DEFAULT_CLOSE
-                    print(f"\n🔄 Reset to defaults - Open: {test_open}, Close: {test_close}")
-                    continue
-                else:
-                    continue
-                
-                # Apply movement
-                if delta != 0:
-                    new_pos = current_pos + delta
-                
-                # Enforce limits
-                new_pos = max(MIN_POSITION, min(MAX_POSITION, new_pos))
-                
-                # Send command to servo
-                result, _ = packet_handler.write2ByteTxRx(port_handler, args.id, GOAL_POS_L, new_pos)
-                if result == COMM_SUCCESS:
-                    current_pos = new_pos
-                    if delta != 0:  # Only show position for incremental moves
-                        print(f"Position: {current_pos:4d} (Open:{test_open:4d} Close:{test_close:4d})", end='\r')
-                
-                time.sleep(0.05)  # Small delay for smooth movement
+            if key == 'q':
+                break
+            elif key in ('h', '?'):
+                print(HELP_MSG)
+                print(f"Position: {current_pos:4d} (Open:{test_open:4d} Close:{test_close:4d})", end='\r', flush=True)
+                continue
+            
+            # Movement commands
+            delta = 0
+            new_pos = current_pos
+            
+            if key in ('a', 'A'):  # left arrow - towards open
+                delta = -10
+            elif key in ('d', 'D'):  # right arrow - towards close
+                delta = +10
+            elif key in ('s', 'S'):  # down arrow - big open
+                delta = -50
+            elif key in ('w', 'W'):  # up arrow - big close
+                delta = +50
+            elif key == 'o':  # go to open position
+                new_pos = test_open
+                print(f"\n➡️  Testing OPEN position: {test_open} ticks")
+            elif key == 'c':  # go to close position
+                new_pos = test_close
+                print(f"\n➡️  Testing CLOSE position: {test_close} ticks")
+            elif key == 'm':  # middle position
+                new_pos = (test_open + test_close) // 2
+                print(f"\n➡️  Going to middle: {new_pos} ticks")
+            elif key == ' ':  # space - toggle
+                new_pos = test_close if last_toggle == test_open else test_open
+                last_toggle = new_pos
+                print(f"\n🔄 Toggle to {'CLOSE' if new_pos == test_close else 'OPEN'}: {new_pos}")
+            elif key == '[':  # set as open position
+                test_open = current_pos
+                print(f"\n✅ Set OPEN position: {test_open} ticks")
+            elif key == ']':  # set as close position
+                test_close = current_pos
+                print(f"\n✅ Set CLOSE position: {test_close} ticks")
+            elif key == 'r':  # reset to defaults
+                test_open = DEFAULT_OPEN
+                test_close = DEFAULT_CLOSE
+                print(f"\n🔄 Reset to defaults - Open: {test_open}, Close: {test_close}")
+                print(f"Position: {current_pos:4d} (Open:{test_open:4d} Close:{test_close:4d})", end='\r', flush=True)
+                continue
+            else:
+                continue
+            
+            # Apply movement
+            if delta != 0:
+                new_pos = current_pos + delta
+            
+            # Enforce limits
+            new_pos = max(MIN_POSITION, min(MAX_POSITION, new_pos))
+            
+            # Send command to servo
+            result, _ = packet_handler.write2ByteTxRx(port_handler, args.id, GOAL_POS_L, new_pos)
+            if result == COMM_SUCCESS:
+                current_pos = new_pos
+                if delta != 0:  # Only show position for incremental moves
+                    print(f"Position: {current_pos:4d} (Open:{test_open:4d} Close:{test_close:4d})", end='\r', flush=True)
+            
+            time.sleep(0.05)  # Small delay for smooth movement
         
         # Disable torque before closing
         packet_handler.write1ByteTxRx(port_handler, args.id, TORQUE_ENABLE, 0)

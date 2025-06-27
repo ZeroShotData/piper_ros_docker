@@ -1,0 +1,53 @@
+Gello–Piper replay guide (30 Hz)
+=================================
+
+1. Context
+   • Trajectories were recorded at 30 Hz with LeRobot → Gello.
+   • Therefore playback must also run at 30 Hz to keep timing.
+
+2. Required ROS 2 interfaces
+   a) Enable arm once
+      Topic: /enable_flag (std_msgs/Bool)
+      or  Service: /enable_srv (piper_msgs/srv/Enable)
+
+   b) Joint-space commands (preferred)
+      Topic : /joint_ctrl_single
+      Type  : sensor_msgs/JointState
+      QoS   : sensor_data, depth = 1
+      Rate  : 30 Hz (matches recording)
+      Fields:
+         name      [joint1 … joint6, gripper]
+         position  rad; gripper 0 (open) … 1 (closed)
+         velocity  optional – scaling factor in velocity[6]
+         effort    optional – gripper effort in effort[6]
+
+   c) Alternative Cartesian API (rare)
+      Topic : /pos_cmd (piper_msgs/PosCmd)
+      Rate  : 30 Hz
+
+3. Launch arm without Gello
+   ros2 launch piper start_single_piper.launch.py \
+       gello_exist:=false gripper_exist:=false use_rosbridge:=false \
+       gripper_config:=/abs/path/my_gripper.yml
+
+4. Minimal 30 Hz replay snippet (rclpy)
+   ```python
+   js_pub = node.create_publisher(JointState, "/joint_ctrl_single", qos_profile_sensor_data)
+   en_pub = node.create_publisher(Bool, "/enable_flag", 10)
+   en_pub.publish(Bool(data=True))          # enable arm once
+
+   rate = node.create_rate(30)              # 30 Hz playback
+   for q in recorded_traj:                  # q = 7-tuple (rad)
+       msg = JointState()
+       msg.name = ["joint1","joint2","joint3","joint4","joint5","joint6","gripper"]
+       msg.position = list(q)
+       js_pub.publish(msg)
+       rate.sleep()
+   ```
+
+5. Transport details
+   • CAN  : can0, 1 Mbit/s
+   • Serial (Gello gripper only): /dev/serial/… 1 MBd
+
+6. Feedback topics (subscribe if needed)
+   /joint_states, /arm_status, /end_pose 

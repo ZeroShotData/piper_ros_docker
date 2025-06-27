@@ -17,25 +17,56 @@ from std_msgs.msg       import Int32
 from sensor_msgs.msg    import JointState
 from std_srvs.srv       import SetBool
 from scservo_sdk        import PortHandler, PacketHandler, COMM_SUCCESS
+from rclpy.parameter    import Parameter
+from rcl_interfaces.srv import GetParameters
+from rclpy.task import Future
+
+# ---------------- constants ----------------
+BAUDRATE = 1_000_000
 
 # ---------------- user-adjustable constants ----------------
-SERVO_ID      = 6
-DEVICE        = os.getenv("SERVO_DEVICE", "/dev/ttyACM0")
-BAUDRATE      = 1_000_000
-
-GOAL_POS_L    = 42
-PRESENT_POS_L = 56
-TORQUE_ENABLE = 40
-PROTOCOL_END  = 0      # ST3215 = protocol 0
+GOAL_POS_L       = 42
+PRESENT_POS_L    = 56
+TORQUE_ENABLE    = 40
+PROTOCOL_END     = 0      # ST3215 = protocol 0
 # -----------------------------------------------------------
 
 class ST3215Driver(Node):
     def __init__(self):
         super().__init__('st3215_driver')
 
-        # Declare parameters
-        self.declare_parameter('device', DEVICE)
-        device_path = self.get_parameter('device').get_parameter_value().string_value
+        # Required parameters pushed by gripper_config_loader
+        self.declare_parameter('gripper/piper_gripper/device', Parameter.Type.STRING)
+        self.declare_parameter('gripper/piper_gripper/servo_id', Parameter.Type.INTEGER)
+        
+        device_path = None
+        servo_id = None
+
+        # Always fetch from loader node
+        client = self.create_client(GetParameters, '/gripper_config_loader/get_parameters')
+        if not client.wait_for_service(timeout_sec=5.0):
+            self.get_logger().fatal('Loader parameter service not available')
+            raise SystemExit
+        req = GetParameters.Request(names=['gripper/piper_gripper/device', 'gripper/piper_gripper/servo_id'])
+        future = client.call_async(req)
+        rclpy.spin_until_future_complete(self, future)
+        if future.result() is None:
+            self.get_logger().fatal('Parameter request failed')
+            raise SystemExit
+        results = future.result().values
+        if len(results) != 2:
+            self.get_logger().fatal('Loader did not return required parameters')
+            raise SystemExit
+        device_path = results[0].string_value
+        servo_id = results[1].integer_value
+
+        self.servo_id = servo_id
+
+        if not device_path:
+            self.get_logger().fatal('Missing gripper device path')
+            raise SystemExit
+        
+        self.get_logger().info(f'Initializing ST3215 driver - Device: {device_path}, Servo ID: {self.servo_id}')
 
         # ROS interfaces
         self.cmd_sub  = self.create_subscription(
@@ -59,9 +90,10 @@ class ST3215Driver(Node):
             self.get_logger().fatal(f'Cannot set baud {BAUDRATE}')
             raise SystemExit
 
-        model, res, _ = self.pkt.ping(self.port, SERVO_ID)
+        model, res, _ = self.pkt.ping(self.port, self.servo_id)
         if res != COMM_SUCCESS:
-            raise RuntimeError('Servo not responding')
+            self.get_logger().error(f'Servo ID {self.servo_id} not responding on {device_path}')
+            raise RuntimeError(f'Servo ID {self.servo_id} not responding')
 
         self.enable_torque(True)
         self.get_logger().info(f'ST3215 ready (model {model})')
@@ -69,19 +101,19 @@ class ST3215Driver(Node):
     # ---------------- helpers --------------------------------
     def enable_torque(self, en: bool) -> bool:
         res, _ = self.pkt.write1ByteTxRx(
-            self.port, SERVO_ID, TORQUE_ENABLE, 1 if en else 0)
+            self.port, self.servo_id, TORQUE_ENABLE, 1 if en else 0)
         return res == COMM_SUCCESS
 
     # ---------------- ROS callbacks ---------------------------
     def cmd_cb(self, msg: Int32):
-        self.pkt.write2ByteTxRx(self.port, SERVO_ID, GOAL_POS_L, msg.data)
+        self.pkt.write2ByteTxRx(self.port, self.servo_id, GOAL_POS_L, msg.data)
 
     def torque_cb(self, req, resp):
         resp.success = self.enable_torque(req.data)
         return resp
 
     def read_and_publish(self):
-        pos, res, _ = self.pkt.read2ByteTxRx(self.port, SERVO_ID, PRESENT_POS_L)
+        pos, res, _ = self.pkt.read2ByteTxRx(self.port, self.servo_id, PRESENT_POS_L)
         if res != COMM_SUCCESS:
             return
 

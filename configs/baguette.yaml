@@ -1,0 +1,19 @@
+metadata:
+  config_name: baguette
+  created_date: '2025-06-24T03:11:23.446004'
+  robot_serial: PIPER_001
+  description: ''
+piper_gripper:
+  servo_id: 4
+  device: /dev/ttyACM0
+  open_ticks: 1666
+  close_ticks: 916
+  default_torque: 1000
+gello_gripper:
+  servo_id: 7
+  port: /dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTA7NMKV-if00-port0
+  open_degrees: 189.0078125
+  close_degrees: 145.00781250000006
+  effort_range:
+  - 0.5
+  - 3.0

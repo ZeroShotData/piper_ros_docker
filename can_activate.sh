@@ -74,8 +74,14 @@ if [ -n "$USB_ADDRESS" ]; then
     done
     
     if [ -z "$INTERFACE_NAME" ]; then
-        echo "Error: Unable to find CAN interface corresponding to USB hardware address $USB_ADDRESS."
+        echo -e "\e[33mWarning:\e[0m No CAN interface matches USB address $USB_ADDRESS."
+        # Fallback: use the first detected CAN interface if available
+        INTERFACE_NAME=$(ip -br link show type can | awk '{print $1}' | head -n1)
+        if [ -z "$INTERFACE_NAME" ]; then
+            echo "\e[31mError: No CAN interfaces detected at all. Exiting.\e[0m"
         exit 1
+        fi
+        echo "Proceeding with detected interface $INTERFACE_NAME instead."
     else
         echo "Found interface $INTERFACE_NAME corresponding to USB hardware address $USB_ADDRESS"
     fi

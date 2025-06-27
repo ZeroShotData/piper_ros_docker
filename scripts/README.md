@@ -4,6 +4,31 @@ This directory contains utility scripts for the Piper robot system.
 
 ## Scripts
 
+### create_gripper_config.py
+
+A unified calibration and configuration tool for both Piper (ST3215) and Gello (Dynamixel) grippers. This tool replaces the need to manually calibrate grippers and edit code - it creates YAML configuration files that can be loaded at launch time.
+
+#### Features
+- Interactive calibration for both gripper types
+- Saves calibration to YAML config files
+- Supports multiple gripper configurations
+- Includes testing mode to verify calibration
+- Generates ready-to-use launch commands
+
+#### Quick Usage
+```bash
+# Full calibration (both grippers)
+python3 create_gripper_config.py --config-name my_gripper_setup
+
+# Use the generated config
+ros2 launch piper start_piper.launch.py \
+    gripper_exist:=true \
+    gripper_config:=/path/to/configs/my_gripper_setup.yaml \
+    gello_exist:=true
+```
+
+See [GRIPPER_CONFIG_README.md](GRIPPER_CONFIG_README.md) for detailed documentation.
+
 ### gripper_calibrate.py
 
 An interactive calibration tool for the ST3215 servo gripper. This tool helps you find the optimal open and close positions for your specific gripper hardware.
@@ -50,10 +75,19 @@ An interactive calibration tool for the ST3215 servo gripper. This tool helps yo
    Range: 750 ticks
 ```
 
+### gello_gripper_calibrate.py
+
+Interactive calibration tool for the Dynamixel-based GELLO gripper. Similar to gripper_calibrate.py but for the Gello side.
+
+#### Usage
+```bash
+python3 gello_gripper_calibrate.py --port /dev/ttyUSB0 --id 7
+```
+
 ## Adding New Scripts
 
 When adding new utility scripts:
 1. Include a comprehensive docstring at the top of the script
 2. Add command-line argument parsing with help text
 3. Update this README with usage instructions
-4. Make the script executable: `chmod +x scripts/your_script.py` 
+4. Consider if the functionality should be integrated into create_gripper_config.py 

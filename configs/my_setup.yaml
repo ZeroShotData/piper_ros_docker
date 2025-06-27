@@ -1,0 +1,11 @@
+metadata:
+  config_name: my_setup
+  created_date: '2025-06-23T22:53:53.243793'
+  robot_serial: PIPER_001
+  description: ''
+piper_gripper:
+  servo_id: 4
+  device: /dev/ttyACM0
+  open_ticks: 1592
+  close_ticks: 900
+  default_torque: 1000

@@ -1,0 +1,90 @@
+Plan: Modify piper ROS stack for dataset replay
+===============================================
+
+Objective
+---------
+Keep the canonical command
+```
+ros2 launch piper start_piper.launch.py device:=/dev/ttyACM0
+```
+while allowing users to disable the Gello bridge—and automatically the gripper—via
+```
+ros2 launch piper start_piper.launch.py device:=/dev/ttyACM0 gello_exist:=false
+```
+This lets Piper accept `/joint_ctrl_single` commands from the lerobot replay node without topic collisions.
+
+Key points
+----------
+1. New launch argument `gello_exist` (default `true`).
+2. When `gello_exist:=false` the launch system must:
+   • NOT start any Gello-related nodes (rosbridge, ZMQServerRobot, etc.).
+   • Force `gripper_exist:=false` even if the user forgot to set it.
+3. Piper nodes continue to come up and wait for `/joint_ctrl_single`.
+4. Provide runtime guard: error & shutdown if >1 publisher appears on that topic.
+
+Implementation steps
+--------------------
+1 – Add launch arguments
+   In `start_piper.launch.py` add at the top:
+   ```python
+   DeclareLaunchArgument('gello_exist', default_value='true'),
+   DeclareLaunchArgument('gripper_exist', default_value='true'),
+   ```
+
+2 – Auto-link gripper flag
+   After parsing launch arguments insert an `OpaqueFunction` that sets
+   `context.launch_configurations['gripper_exist']='false'` when
+   `gello_exist` is "false".  (Simplest legal way to override an arg from
+   inside a launch file.)
+
+3 – Conditional node inclusion
+   Wrap every node related to Gello with:
+   ```python
+   condition=IfCondition(LaunchConfiguration('gello_exist'))
+   ```
+   Wrap the standalone gripper CAN driver with:
+   ```python
+   condition=IfCondition(LaunchConfiguration('gripper_exist'))
+   ```
+
+4 – Runtime safety node (optional but recommended)
+   Add a small Python executable `single_publisher_guard.py`:
+   ```python
+   import rclpy, sys
+   from rclpy.node import Node
+   rclpy.init()
+   node=Node('pub_guard')
+   def timer_cb():
+       if len(node.get_publishers_info_by_topic('/joint_ctrl_single'))>1:
+           node.get_logger().error('Multiple publishers on /joint_ctrl_single; shutting down')
+           rclpy.shutdown()
+           sys.exit(1)
+   node.create_timer(1.0, timer_cb)
+   rclpy.spin(node)
+   ```
+   Include it **unconditionally** so the guard is active in both modes.
+
+5 – Convenience replay launch (optional)
+   Create `piper_replay.launch.py`:
+   ```python
+   IncludeLaunchDescription(PythonLaunchDescriptionSource([this_dir, 'start_piper.launch.py']),
+       launch_arguments={'gello_exist':'false', 'device':device_arg}.items()),
+   ExecuteProcess(cmd=['python','-m','lerobot.scripts.control_robot',
+                      '--robot.type=piper_gello', '--control.type=replay',
+                      '--control.repo_id', LaunchConfiguration('repo_id'),
+                      '--control.episode', LaunchConfiguration('episode')])
+   ```
+
+6 – Documentation
+   README snippet:
+   ```bash
+   # Start Piper ready for dataset replay
+   ros2 launch piper start_piper.launch.py device:=/dev/ttyACM0 gello_exist:=false &
+   # Then run the lerobot replay
+   python lerobot/scripts/control_robot.py --robot.type=piper_gello --control.type=replay ...
+   ```
+
+7 – CI tests
+   • ROS2 launch test starts `start_piper.launch.py gello_exist:=false`.
+   • Starts a fake publisher on `/joint_ctrl_single` and asserts Piper node accepts.
+   • Ensures that launching with default args still brings up Gello nodes and both `/joint_ctrl_single` publisher count == 1. 

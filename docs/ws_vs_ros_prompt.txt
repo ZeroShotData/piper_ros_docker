@@ -1,0 +1,37 @@
+Prompt for the AI assistant
+==========================
+
+Context
+-------
+Inside the container the Piper arm is already driven by native ROS 2 topics:
+  • /joint_ctrl_single   (sensor_msgs/JointState)
+  • /enable_flag         (std_msgs/Bool)
+A rosbridge-websocket server can be enabled (`use_rosbridge:=true`) and exposes the same
+interfaces on TCP :9090.
+
+Task
+----
+You are asked to advise on the cleanest way to stream a pre-recorded trajectory from a
+non-ROS capture program.
+
+1. Compare two options
+   a) **Publish directly via ROS 2** from the capture PC (run `ros2` client libraries).
+   b) **Use rosbridge Web-Sockets** and send JSON frames at 30 Hz.
+
+2. For each option discuss
+   • Setup complexity (dependencies, network, time-sync)
+   • Message framing / type safety / debugging tools
+   • Performance and latency (30 Hz real-time requirement)
+   • Maintainability and long-term flexibility
+
+3. Give a clear recommendation for the given constraints: 
+   – capture code is plain Python, no ROS today
+   – container already has rosbridge
+   – trajectory replay needs only /enable_flag and /joint_ctrl_single
+
+4. Detail your implementation strategy for the chosen path, including
+   • connection bootstrap
+   • minimal code snippet
+   • monitoring / error handling
+
+Return your analysis in a concise bullet-point format. 

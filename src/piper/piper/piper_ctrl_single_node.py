@@ -19,6 +19,8 @@ from numpy import clip
 import subprocess
 from rclpy.qos import qos_profile_sensor_data
 import rclpy.logging
+from rclpy.parameter import Parameter
+from rcl_interfaces.srv import GetParameters
 
 
 class PiperRosNode(Node):
@@ -47,6 +49,9 @@ class PiperRosNode(Node):
         self.declare_parameter('gripper_val_mutiple', 1)
         self.declare_parameter('rviz_ctrl_flag', False)
         self.declare_parameter('use_rosbridge', False)
+        # Required gripper parameters published by loader
+        self.declare_parameter('gripper/piper_gripper/open_ticks', Parameter.Type.INTEGER)
+        self.declare_parameter('gripper/piper_gripper/close_ticks', Parameter.Type.INTEGER)
 
         self.can_port = self.get_parameter('can_port').get_parameter_value().string_value
         self.auto_enable = self.get_parameter('auto_enable').get_parameter_value().bool_value
@@ -55,6 +60,21 @@ class PiperRosNode(Node):
         self.gripper_val_mutiple = max(0, min(self.gripper_val_mutiple, 10))
         self.rviz_ctrl_flag = self.get_parameter('rviz_ctrl_flag').get_parameter_value().bool_value
         self.use_rosbridge = self.get_parameter('use_rosbridge').get_parameter_value().bool_value
+
+        # Always fetch loader parameters
+        client = self.create_client(GetParameters, '/gripper_config_loader/get_parameters')
+        if not client.wait_for_service(timeout_sec=5.0):
+            self.get_logger().fatal('Loader parameter service unavailable')
+            raise SystemExit
+        req = GetParameters.Request(names=['gripper/piper_gripper/open_ticks', 'gripper/piper_gripper/close_ticks'])
+        future = client.call_async(req)
+        rclpy.spin_until_future_complete(self, future)
+        results = future.result().values
+        if not results or len(results) < 2:
+            self.get_logger().fatal('Gripper ticks parameters not available')
+            raise SystemExit
+        self.servo_open_ticks = results[0].integer_value
+        self.servo_close_ticks = results[1].integer_value
 
         self.get_logger().info(f"can_port is {self.can_port}")
         self.get_logger().info(f"auto_enable is {self.auto_enable}")
@@ -417,8 +437,8 @@ class PiperRosNode(Node):
         if self.gripper_exist and len(joint_data.position) >= 7:
             # Convert gripper value (0-1) to servo ticks
             # Assuming open=1592 ticks, close=900 ticks (from calibration)
-            SERVO_OPEN_TICKS = 1592
-            SERVO_CLOSE_TICKS = 900
+            SERVO_OPEN_TICKS = self.servo_open_ticks
+            SERVO_CLOSE_TICKS = self.servo_close_ticks
             
             # joint_data.position[6] is in range 0-1 (normalized gripper value)
             gripper_normalized = joint_data.position[6]
@@ -427,8 +447,8 @@ class PiperRosNode(Node):
             self.get_logger().info(f"Gripper normalized value: {gripper_normalized}")
             
             # Map 0-1 to servo ticks (0=open, 1=closed)
-            # Correct mapping: 0 -> OPEN, 1 -> CLOSE
-            servo_ticks = int(SERVO_OPEN_TICKS - (SERVO_OPEN_TICKS - SERVO_CLOSE_TICKS) * gripper_normalized)
+            # Reversed mapping: 0 -> CLOSE, 1 -> OPEN
+            servo_ticks = int(SERVO_CLOSE_TICKS + (SERVO_OPEN_TICKS - SERVO_CLOSE_TICKS) * gripper_normalized)
             
             self.get_logger().info(f"Publishing servo ticks: {servo_ticks}")
             

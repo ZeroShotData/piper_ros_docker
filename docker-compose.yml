@@ -17,11 +17,15 @@ services:
       - .:/app:rw  # Mount local repository for live development
       - ../PiperGello:/PiperGello:rw  # Mount PiperGello repo
     privileged: true
-    # Host networking mode allows:
-    # - Direct access to CAN devices
-    # - ROS bridge server on port 9090
-    # - Chrony time sync on port 123/udp
-    network_mode: "host"
+    # Expose required ports explicitly so tools on the host can reach
+    # rosbridge (TCP 9090) and Chrony (UDP 123) without relying on
+    # host-network mode (which is unsupported on some platforms).
+    ports:
+      - "9090:9090"      # rosbridge WebSocket
+      - "123:123/udp"   # Chrony time-sync (optional)
+    # If you prefer full host networking (e.g. for raw CAN access) you can
+    # still uncomment the next line and remove the `ports:` block above.
+    # network_mode: "host"
     cap_add:
       - NET_ADMIN  # Required for CAN interface configuration
     devices:
