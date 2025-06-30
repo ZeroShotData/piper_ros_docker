@@ -9,6 +9,16 @@ piper_gripper:
   open_ticks: 1666
   close_ticks: 916
   default_torque: 1000
+robot:
+  arm_side: left
+  arms:
+    left:
+      joint_topic: /joint_ctrl_single
+      joint_state_topic: /joint_states_single
+      end_pose_topic: /end_pose
+      arm_status_topic: /arm_status
+      enable_topic: /enable_flag
+      servo_topic: /servo/command_raw
 gello_gripper:
   servo_id: 7
   port: /dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTA7NMKV-if00-port0
