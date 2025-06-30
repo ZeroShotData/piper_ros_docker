@@ -1,39 +1,46 @@
+"""DEPRECATED: This launch file is deprecated. Use piper_unified.launch.py instead.
+
+Backward compatibility wrapper for replay_mode.launch.py
+Maps to: ros2 launch piper piper_unified.launch.py operation_mode:=replay
+
+Usage:
+  ros2 launch piper replay_mode.launch.py gripper_config:=/app/configs/my_setup.yaml
+  
+Recommended:
+  ros2 launch piper piper_unified.launch.py operation_mode:=replay gripper_config:=/app/configs/my_setup.yaml
+"""
+
 from launch import LaunchDescription
-from launch.actions import IncludeLaunchDescription
-from launch_ros.actions import Node
+from launch.actions import IncludeLaunchDescription, DeclareLaunchArgument
 from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.substitutions import LaunchConfiguration
 import os
 
 def generate_launch_description():
-    # Path to the full-feature Piper launcher that runs the parameter loader
-    piper_launch_path = os.path.join(
-        os.path.dirname(__file__),
-        'start_piper.launch.py'
+    # Print deprecation warning
+    import sys
+    print("\n" + "="*60, file=sys.stderr)
+    print("WARNING: replay_mode.launch.py is DEPRECATED", file=sys.stderr)
+    print("Please use: ros2 launch piper piper_unified.launch.py operation_mode:=replay", file=sys.stderr)
+    print("="*60 + "\n", file=sys.stderr)
+    
+    # Gripper config argument (preserve backward compatibility)
+    gripper_config_arg = DeclareLaunchArgument(
+        'gripper_config',
+        default_value='/app/configs/my_setup.yaml',
+        description='Absolute path to gripper YAML configuration.'
     )
-
-    # Default gripper config path (can be overridden via CLI argument)
-    default_cfg = '/app/configs/my_setup.yaml'
-
-    # Include existing launch with replay-friendly arguments
-    piper_launch = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(piper_launch_path),
+    
+    # Path to the unified launch file
+    unified_launch_path = os.path.join(os.path.dirname(__file__), 'piper_unified.launch.py')
+    
+    # Include unified launch with replay mode
+    unified_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(unified_launch_path),
         launch_arguments={
-            'use_rosbridge': 'true',   # Start rosbridge automatically
-            'gello_exist': 'false',    # Disable Gello bridge
-            'auto_enable': 'false',    # Wait for enable flag from host
-            'gripper_config': default_cfg,
+            'operation_mode': 'replay',
+            'gripper_config': LaunchConfiguration('gripper_config'),
         }.items(),
     )
-
-    # Replay logger node – prints incoming JointState rate
-    replay_logger_node = Node(
-        package='piper',
-        executable='piper_replay_logger',
-        name='replay_logger',
-        output='screen',
-    )
-
-    return LaunchDescription([
-        piper_launch,
-        replay_logger_node,
-    ]) 
+    
+    return LaunchDescription([gripper_config_arg, unified_launch]) 

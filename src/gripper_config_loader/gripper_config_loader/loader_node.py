@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""ROS 2 node that validates a gripper YAML configuration file and exposes
-its keys as ROS parameters under the ``/gripper`` namespace.
+"""ROS 2 node that validates a robot YAML configuration file and exposes
+its keys as ROS parameters under the ``/gripper`` and ``/robot`` namespaces.
 
 The node is intentionally *read-only*: it runs once at start-up to ensure the
 YAML file is present, syntactically correct and contains all mandatory
@@ -12,10 +12,13 @@ Mandatory sections
 * ``piper_gripper`` – configuration for the on-arm ST3215 servo.
 * ``gello_gripper`` – only required when the *gello_exist* launch argument is
   ``true``.
+* ``robot`` – robot arm configuration for LeRobot integration (optional).
 
-All keys (regardless of depth) are flattened into ``/gripper/<section>/<key>``
-parameters so that the rest of the system can simply retrieve them with
-``node.get_parameter('gripper/<section>/<key>')``.
+Parameter flattening
+--------------------
+* Gripper keys are flattened into ``/gripper/<section>/<key>`` parameters
+* Robot keys are flattened into ``/robot/<key>`` parameters  
+* The ``joint_topic`` is also available as a top-level parameter for LeRobot
 """
 from __future__ import annotations
 
@@ -79,16 +82,50 @@ class GripperConfigLoader(Node):
         # Add every key as ROS parameter
         for section, content in data.items():
             if not isinstance(content, dict):
-                # Flatten scalar section as a single parameter
-                full_name = f"gripper/{section}"
+                # Flatten scalar section as a single parameter  
+                namespace = "robot" if section == "robot" else "gripper"
+                full_name = f"{namespace}/{section}"
                 self.declare_parameter(full_name, content)
                 continue
 
-            for key, value in content.items():
-                full_name = f"gripper/{section}/{key}"
-                self.declare_parameter(full_name, value)
+            # Handle robot section with special flattening for arms
+            if section == "robot":
+                self._flatten_robot_config(content)
+            else:
+                # Handle gripper and other sections
+                for key, value in content.items():
+                    full_name = f"gripper/{section}/{key}"
+                    self.declare_parameter(full_name, value)
 
-        self.get_logger().info(f"Published gripper parameters from {path}")
+        self.get_logger().info(f"Published configuration parameters from {path}")
+
+    def _flatten_robot_config(self, robot_config: Dict[str, Any]) -> None:
+        """Flatten robot configuration for LeRobot access"""
+        # Get arm side (default to 'left')
+        arm_side = robot_config.get('arm_side', 'left')
+        
+        # Flatten arm_side as top-level parameter
+        self.declare_parameter('robot/arm_side', arm_side)
+        
+        # Get arm configuration for the specified side
+        arms = robot_config.get('arms', {})
+        if arm_side in arms:
+            arm_config = arms[arm_side]
+            
+            # Flatten arm topics as top-level robot parameters for LeRobot access
+            for key, value in arm_config.items():
+                full_name = f"robot/{key}"
+                self.declare_parameter(full_name, value)
+                
+            # Also set joint_topic as a top-level parameter for backwards compatibility
+            if 'joint_topic' in arm_config:
+                self.declare_parameter('joint_topic', arm_config['joint_topic'])
+        
+        # Flatten any other robot-level parameters
+        for key, value in robot_config.items():
+            if key not in ['arm_side', 'arms']:
+                full_name = f"robot/{key}"
+                self.declare_parameter(full_name, value)
 
     # ------------------------------------------------------------------
     # Helpers

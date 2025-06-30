@@ -1,109 +1,244 @@
-# Zero-shot Quick-Start
+# Piper Robot - ROS2 Control System
 
-This short guide shows how to:
+A modern ROS2 control system for the Piper robotic arm with clean architecture and three operation modes.
 
-1. Write a **gripper YAML configuration**
-2. Launch tele-operation in the common variants
-3. Run a few one-liner **debug utilities**
+## Quick Start
 
----
-
-## 1. Create a YAML config
-Run the interactive calibration script:
-
+### 1. Create Robot Configuration
 ```bash
 cd /home/zeroshot/piper_ros_docker
 python3 scripts/create_gripper_config.py --config-name my_setup
 ```
 
-The wizard measures open/close limits for Piper (ST3215) and (optionally) the
-Gello Dynamixel gripper, then saves **configs/my_setup.yaml** with the correct
-structure.  When you only have the Piper gripper or Gello, use `--piper-only`
-or `--gello-only`.
+### 2. Launch Robot (Choose Your Mode)
+```bash
+# Teleop: Direct control via Gello device
+ros2 launch piper piper_unified.launch.py operation_mode:=teleop gripper_config:=/app/configs/my_setup.yaml
 
-Advanced users can still hand-edit the file afterwards.  For reference, the
-essential structure is:
+# Replay: Remote control via LeRobot/websocket
+ros2 launch piper piper_unified.launch.py operation_mode:=replay gripper_config:=/app/configs/my_setup.yaml
 
-```yaml
-# configs/my_setup.yaml
-piper_gripper:
-  device: "/dev/ttyUSB0"       # Serial port of the ST3215 driver
-  servo_id: 6                   # Servo ID on the RS-485 bus
-  open_ticks: 1592              # <-- auto-filled by the tool
-  close_ticks: 900              # <-- auto-filled by the tool
-  default_torque: 1000          # Holding torque (PWM) used by controller
-
-# Only required when gello_exist:=true
-gello_gripper:
-  port: "/dev/ttyUSB0"         # Dynamixel USB bridge (symlink auto-created)
-  servo_id: 7                   # Dynamixel ID of the Gello gripper
-  open_degrees: 205.0           # <-- auto-filled by the tool
-  close_degrees: 145.0          # <-- auto-filled by the tool
-  effort_range: [0.5, 3.0]      # Clamp for JointState.effort → current
+# Monitor: Read-only observation and debugging
+ros2 launch piper piper_unified.launch.py operation_mode:=monitor gripper_config:=/app/configs/my_setup.yaml
 ```
 
-Use the absolute path of the generated file when launching.
+## Operation Modes & Code Examples
 
-### Script options
-
-Key flags of `create_gripper_config.py`:
-
-| Flag | Default | Purpose |
-|------|---------|---------|
-| `--config-name NAME` | – | Name for **new** YAML (saved to `configs/NAME.yaml`). |
-| `--load-config PATH` | – | Load existing YAML and tweak values. |
-| `--piper-only` | off | Calibrate only the Piper ST3215 gripper. |
-| `--gello-only` | off | Calibrate only the Gello Dynamixel gripper. |
-| `--piper-device` | `/dev/ttyACM0` | Serial device of ST3215 USB adaptor. |
-| `--piper-id` | `6` | Servo ID on the RS-485 chain. |
-| `--piper-torque` | `1000` | Default PWM limit written into the YAML. |
-| `--gello-port` | `/dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTA7NMKV-if00-port0` | USB serial of Dynamixel U2D2. |
-| `--gello-id` | `7` | Dynamixel ID of the Gello gripper. |
-| `--gello-effort-min` | `0.5` | Lower clamp when mapping effort→current. |
-| `--gello-effort-max` | `3.0` | Upper clamp. |
-| `--description` | "" | Free-form description stored in YAML metadata. |
-| `--robot-serial` | `PIPER_001` | Robot serial number stored in metadata. |
-
-Run with `-h` to see the full help text.
-
-At the end the wizard asks whether to save the file; answer **n** to quit
-without writing anything.
-
----
-
-## 2. Launch tele-op
-```
-# With Gello bridge and gripper
-ros2 launch piper start_piper.launch.py \
-    gripper_exist:=true  gello_exist:=true \
-    gripper_config:=/app/configs/my_setup.yaml
-
-# With Gello bridge but **no** physical gripper
-ros2 launch piper start_piper.launch.py \
-    gripper_exist:=false gello_exist:=true \
-    gripper_config:=/app/configs/my_setup.yaml
-
-# No Gello at all (arm-only)
-ros2 launch piper start_piper.launch.py \
-    gello_exist:=false  gripper_exist:=false \
-    gripper_config:=/app/configs/my_setup.yaml
-```
-Nothing else has to be set – the loader publishes every parameter the other nodes need.
-
----
-
-## 3. Debug utilities
-Handy one-liners when something goes wrong:
+### Teleop Mode
+**Purpose**: Direct robot control via Gello teleoperation device  
+**Architecture**: Gello → Piper Node → Publishes to `/joint_ctrl_single` → Robot  
 
 ```bash
-# Kill helper scripts / main launch
-pkill -f experiments/launch_nodes.py   # ZMQ server (PiperGello)
-pkill -f experiments/run_env.py        # Dynamixel bridge
-pkill -f "ros2 launch piper start_piper.launch.py"  # Main launch
+# Launch teleop with auto-enable
+ros2 launch piper piper_unified.launch.py \
+    operation_mode:=teleop \
+    gripper_config:=/app/configs/my_setup.yaml \
+    auto_enable:=true
 
-# List USB serial devices
-ls -l /dev/ttyUSB* /dev/ttyACM* 2>/dev/null
+# Launch teleop without gripper
+ros2 launch piper piper_unified.launch.py \
+    operation_mode:=teleop \
+    gripper_config:=/app/configs/my_setup.yaml \
+    gripper_exist:=false
 
-# Bring CAN interface up manually (1 Mbit)
+# Custom CAN interface
+ros2 launch piper piper_unified.launch.py \
+    operation_mode:=teleop \
+    gripper_config:=/app/configs/my_setup.yaml \
+    can_port:=can1
+```
+
+### Replay Mode
+**Purpose**: Remote control for dataset collection/playback  
+**Architecture**: LeRobot → WebSocket → RosBridge → **DIRECTLY** to `/joint_ctrl_single` → Robot  
+
+```bash
+# Basic replay mode (auto-starts rosbridge)
+ros2 launch piper piper_unified.launch.py \
+    operation_mode:=replay \
+    gripper_config:=/app/configs/my_setup.yaml
+
+# Replay without gripper
+ros2 launch piper piper_unified.launch.py \
+    operation_mode:=replay \
+    gripper_config:=/app/configs/my_setup.yaml \
+    gripper_exist:=false
+
+# Custom namespace for multiple arms
+ros2 launch piper piper_unified.launch.py \
+    operation_mode:=replay \
+    gripper_config:=/app/configs/my_setup.yaml \
+    --ros-args -r __ns:=/arm1
+```
+
+**LeRobot Integration Example**:
+```python
+# LeRobot publishes directly to /joint_ctrl_single via rosbridge
+# No piper node republishing - eliminates publisher conflicts
+import roslibpy
+
+client = roslibpy.Ros(host='localhost', port=9090)
+client.run()
+
+joint_pub = roslibpy.Topic(client, '/joint_ctrl_single', 'sensor_msgs/JointState')
+
+# Publish commands directly (piper node only provides feedback)
+joint_msg = {
+    'name': ['joint1', 'joint2', 'joint3', 'joint4', 'joint5', 'joint6', 'gripper'],
+    'position': [0.0, -0.5, 1.0, 0.0, 0.5, 0.0, 0.8]
+}
+joint_pub.publish(roslibpy.Message(joint_msg))
+```
+
+### Monitor Mode  
+**Purpose**: Safe monitoring without robot control  
+**Architecture**: LeRobot → WebSocket → RosBridge → **DIRECTLY** to `/joint_ctrl_single` → Monitor (subscribe only)  
+
+```bash
+# JSON monitoring (full data)
+ros2 launch piper piper_unified.launch.py \
+    operation_mode:=monitor \
+    gripper_config:=/app/configs/my_setup.yaml \
+    monitor_log_format:=json \
+    monitor_rate_interval:=3.0
+
+# Positions-only (minimal overhead)
+ros2 launch piper piper_unified.launch.py \
+    operation_mode:=monitor \
+    gripper_config:=/app/configs/my_setup.yaml \
+    monitor_log_format:=positions
+
+# Data collection pipeline
+ros2 launch piper piper_unified.launch.py \
+    operation_mode:=monitor \
+    gripper_config:=/app/configs/my_setup.yaml \
+    monitor_log_format:=positions > joint_data.log
+```
+
+**Monitor Output Examples**:
+```bash
+# JSON format
+{"timestamp": "2025-06-27T20:30:15", "topic": "/joint_ctrl_single", "rate_hz": 100.0, "message": {"positions": [0.12, -0.46, 0.79, 0.01, -0.35, 0.68, 0.8]}}
+
+# Positions format  
+0.12 -0.46 0.79 0.01 -0.35 0.68
+
+# Structured format
+[MONITOR] 20:30:15.123 | /joint_ctrl_single
+  Count: 1245 | Rate: 100.1 Hz | Uptime: 12.4s
+  Joints: [0.120, -0.460, 0.790, 0.010, -0.350, 0.680]
+```
+
+## Architecture Improvements
+
+### Problem Solved
+**Old Architecture** (Broken):
+- Replay: LeRobot → WebSocket → Piper → **RE-publishes** to `/joint_ctrl_single` → Robot ❌
+- Monitor: LeRobot → WebSocket → Piper → **RE-publishes** + Monitors → **Conflict** ❌
+
+**New Architecture** (Fixed):
+- Replay: LeRobot → WebSocket → RosBridge → **DIRECTLY** to `/joint_ctrl_single` → Robot ✅
+- Monitor: LeRobot → WebSocket → RosBridge → **DIRECTLY** to `/joint_ctrl_single` → Monitor ✅
+
+### Publisher Strategy
+```python
+# Mode-specific publisher creation (piper_ctrl_single_node.py:101-109)
+if self.operation_mode == 'teleop':
+    self._create_teleop_publishers()      # Full set including joint_ctrl_pub
+elif self.operation_mode == 'replay':
+    self._create_replay_publishers()      # NO joint_ctrl_pub (RosBridge publishes)
+elif self.operation_mode == 'monitor':
+    self._create_monitor_publishers()     # NO joint_ctrl_pub or servo_cmd_pub
+```
+
+## Essential Parameters
+
+```bash
+# Required
+operation_mode:=teleop|replay|monitor  # Defines node behavior
+gripper_config:=/path/to/config.yaml  # Robot parameters
+
+# Common options
+can_port:=can0                         # CAN interface
+auto_enable:=true|false               # Auto-configured per mode
+gripper_exist:=true|false             # Auto-configured per mode
+
+# Monitor-specific
+monitor_log_format:=json|structured|simple|positions
+monitor_rate_interval:=5.0            # Statistics interval
+```
+
+## Validation Commands
+
+```bash
+# Verify architecture works correctly
+ros2 topic info /joint_ctrl_single
+
+# Expected publishers by mode:
+# Teleop: 1 publisher (piper node can publish commands)
+# Replay: 0 publishers (when only piper running - RosBridge publishes directly)  
+# Monitor: 0 publishers (when only piper running - read-only)
+
+# Check message flow
+ros2 topic echo /joint_states_single   # Robot feedback
+ros2 topic hz /joint_ctrl_single       # Command rate
+```
+
+## Troubleshooting
+
+### Publisher Conflicts
+```bash
+# Error: "already has publisher" 
+# Cause: Multiple nodes trying to publish to /joint_ctrl_single
+# Solution: Use correct mode
+
+# Wrong: Creates conflict with LeRobot
+ros2 launch piper piper_unified.launch.py operation_mode:=teleop
+
+# Correct: No conflict
+ros2 launch piper piper_unified.launch.py operation_mode:=replay
+```
+
+### Common Issues
+```bash
+# Check CAN interface
 sudo ip link set can0 up type can bitrate 1000000
-``` 
+
+# Fix USB permissions  
+sudo chmod 666 /dev/ttyUSB0 /dev/ttyACM0
+
+# Test rosbridge (replay/monitor modes)
+curl -I http://localhost:9090
+
+# Kill conflicting processes
+pkill -f piper
+```
+
+### Error Messages
+The system provides clear guidance:
+```
+ERROR: Publisher conflict detected!
+Topic: /joint_ctrl_single
+Current Publishers: 1
+
+Resolution Options:
+1. Stop conflicting nodes: ros2 node kill <node_name>
+2. Use different namespace: --ros-args -r __ns:=/arm_unique  
+3. Switch to replay/monitor mode: operation_mode:=replay
+```
+
+## Key Topics
+
+- `/joint_ctrl_single` - Joint commands (Input → Robot)
+- `/joint_states_single` - Joint feedback (Output ← Robot)  
+- `/end_pose` - End effector pose (Output ← Robot)
+- `/arm_status` - Robot status and errors (Output ← Robot)
+
+## Safety Features
+
+- **Monitor Mode**: ALL robot control commands blocked at node level
+- **Publisher Validation**: Pre-startup conflict detection prevents runtime issues  
+- **Mode Separation**: Clear boundaries prevent accidental cross-mode operation
+- **Error Guidance**: Specific resolution steps for common conflicts
+
+**Always use monitor mode for debugging and replay mode for LeRobot integration.**
