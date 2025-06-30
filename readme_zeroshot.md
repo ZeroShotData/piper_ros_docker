@@ -16,7 +16,7 @@ python3 scripts/create_gripper_config.py --config-name my_setup
 ros2 launch piper piper_unified.launch.py operation_mode:=teleop gripper_config:=/app/configs/my_setup.yaml
 
 # Replay: Remote control via LeRobot/websocket
-ros2 launch piper piper_unified.launch.py operation_mode:=replay gripper_config:=/app/configs/my_setup.yaml
+ros2 launch piper piper_unified.launch.py operation_mode:=replay gripper_config:=/app/configs/my_setup.yaml auto_enable:=true
 
 # Monitor: Read-only observation and debugging
 ros2 launch piper piper_unified.launch.py operation_mode:=monitor gripper_config:=/app/configs/my_setup.yaml
@@ -56,18 +56,21 @@ ros2 launch piper piper_unified.launch.py \
 # Basic replay mode (auto-starts rosbridge)
 ros2 launch piper piper_unified.launch.py \
     operation_mode:=replay \
-    gripper_config:=/app/configs/my_setup.yaml
+    gripper_config:=/app/configs/my_setup.yaml \
+    auto_enable:=true
 
 # Replay without gripper
 ros2 launch piper piper_unified.launch.py \
     operation_mode:=replay \
     gripper_config:=/app/configs/my_setup.yaml \
-    gripper_exist:=false
+    gripper_exist:=false \
+    auto_enable:=true
 
 # Custom namespace for multiple arms
 ros2 launch piper piper_unified.launch.py \
     operation_mode:=replay \
     gripper_config:=/app/configs/my_setup.yaml \
+    auto_enable:=true \
     --ros-args -r __ns:=/arm1
 ```
 
