@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Guard node that ensures only one publisher exists on /joint_ctrl_single.
+"""Guard node that ensures only one publisher exists on /joint_ctrl.
 
 If more than one publisher is detected it logs an error and exits the
 process so that docker/launch supervision can restart the whole stack.
@@ -22,10 +22,10 @@ class SinglePublisherGuard(Node):
     # Callbacks
     # ------------------------------------------------------------------
     def _on_timer(self) -> None:
-        publishers = self.get_publishers_info_by_topic("/joint_ctrl_single")
+        publishers = self.get_publishers_info_by_topic("/joint_ctrl")
         if len(publishers) > 1:
             self.get_logger().error(
-                "Multiple publishers detected on /joint_ctrl_single; shutting down."
+                "Multiple publishers detected on /joint_ctrl; shutting down."
             )
             # Shutdown the ROS graph first so that other nodes are notified
             rclpy.shutdown()

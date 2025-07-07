@@ -40,8 +40,8 @@ class PiperRosNode(Node):
                 multiple arms from the same machine you can run two instances
                 of this class with e.g. ``namespace='arm1'`` and
                 ``namespace='arm2'`` – all their topics will then be
-                automatically isolated (``/arm1/joint_ctrl_single``,
-                ``/arm2/joint_ctrl_single`` …).
+                automatically isolated (``/arm1/joint_ctrl``,
+                ``/arm2/joint_ctrl`` …).
         """
         super().__init__(node_name, namespace=namespace)
         # ROS parameters
@@ -57,6 +57,7 @@ class PiperRosNode(Node):
         self.declare_parameter('monitor_log_format', 'json')
         self.declare_parameter('monitor_rate_interval', 5.0)
         self.declare_parameter('monitor_topics', [])
+        self.declare_parameter('monitor_source', 'lerobot')
         # Required gripper parameters published by loader
         self.declare_parameter('gripper/piper_gripper/open_ticks', Parameter.Type.INTEGER)
         self.declare_parameter('gripper/piper_gripper/close_ticks', Parameter.Type.INTEGER)
@@ -74,6 +75,7 @@ class PiperRosNode(Node):
         self.monitor_log_format = self.get_parameter('monitor_log_format').get_parameter_value().string_value
         self.monitor_rate_interval = self.get_parameter('monitor_rate_interval').get_parameter_value().double_value
         self.monitor_topics = self.get_parameter('monitor_topics').get_parameter_value().string_array_value
+        self.monitor_source = self.get_parameter('monitor_source').get_parameter_value().string_value
         
         # Validate operation mode
         if self.operation_mode not in ['teleop', 'replay', 'monitor']:
@@ -98,6 +100,7 @@ class PiperRosNode(Node):
             self.get_logger().info(f"monitor_log_format is {self.monitor_log_format}")
             self.get_logger().info(f"monitor_rate_interval is {self.monitor_rate_interval}")
             self.get_logger().info(f"monitor_topics is {self.monitor_topics}")
+            self.get_logger().info(f"monitor_source is {self.monitor_source}")
         # keep console quiet to avoid timing stalls
         # self.get_logger().set_level(rclpy.logging.LoggingSeverity.WARN)
         
@@ -117,12 +120,16 @@ class PiperRosNode(Node):
         self.joint_states.position = [0.0] * 7
         self.joint_states.velocity = [0.0] * 7
         self.joint_states.effort = [0.0] * 7
-        # Joint ctrl
+        
+        # Joint ctrl message for storing control commands
         self.joint_ctrl = JointState()
         self.joint_ctrl.name = ['joint1', 'joint2', 'joint3', 'joint4', 'joint5', 'joint6', 'gripper']
         self.joint_ctrl.position = [0.0] * 7
         self.joint_ctrl.velocity = [0.0] * 7
         self.joint_ctrl.effort = [0.0] * 7
+        # Ensure attribute exists even when echo publisher is removed (standardized topic naming)
+        self.joint_ctrl_pub = None
+        
         # Enable flag
         self.__enable_flag = False
         
@@ -143,7 +150,7 @@ class PiperRosNode(Node):
         # Start subscription thread
         self.create_subscription(PosCmd, 'pos_cmd', self.pos_callback, 1)
         # Use sensor data QoS to ensure old commands are dropped when backend is slow
-        self.create_subscription(JointState, 'joint_ctrl_single', self.joint_callback, qos_profile_sensor_data)
+        self.create_subscription(JointState, 'joint_ctrl', self.joint_callback, qos_profile_sensor_data)
         self.create_subscription(Bool, 'enable_flag', self.enable_callback, 1)
 
         # Buffer for the latest JointState command
@@ -231,8 +238,8 @@ class PiperRosNode(Node):
     def _get_critical_topics_for_mode(self):
         """Get list of topics that would conflict if we publish to them"""
         if self.operation_mode == 'teleop':
-            # Teleop mode needs exclusive access to joint_ctrl_single for Gello control
-            return ['/joint_ctrl_single', 'joint_ctrl']
+            # Teleop mode needs exclusive access to joint_ctrl for Gello control
+            return ['/joint_ctrl']
         elif self.operation_mode == 'replay':
             # Replay mode should NOT publish to joint_ctrl - RosBridge handles it
             return []
@@ -273,26 +280,23 @@ Cannot start in {self.operation_mode} mode with existing publishers on {topic}.
         self.get_logger().info("Creating teleop publishers (full set)")
         
         # Full publisher set - needs joint_ctrl_pub for Gello control
-        self.joint_pub = self.create_publisher(JointState, 'joint_states_single', 1)
-        self.joint_ctrl_pub = self.create_publisher(JointState, 'joint_ctrl', 1)
+        self.joint_pub = self.create_publisher(JointState, 'joint_states', 1)
         self.arm_status_pub = self.create_publisher(PiperStatusMsg, 'arm_status', 1)
         self.end_pose_pub = self.create_publisher(Pose, 'end_pose', 1)
         self.servo_cmd_pub = self.create_publisher(Int32, 'servo/command_raw', 1)
         
-        self.get_logger().info("Teleop publishers created: joint_ctrl, joint_states, arm_status, end_pose, servo_cmd")
+        self.get_logger().info("Teleop publishers created: joint_states, arm_status, end_pose, servo_cmd")
     
     def _create_replay_publishers(self):
         """Create limited publisher set for replay mode (NO joint_ctrl_pub)"""
         self.get_logger().info("Creating replay publishers (limited set - no joint_ctrl)")
         
         # Limited publisher set - NO joint_ctrl_pub (RosBridge publishes directly)
-        self.joint_pub = self.create_publisher(JointState, 'joint_states_single', 1)
+        self.joint_pub = self.create_publisher(JointState, 'joint_states', 1)
         self.arm_status_pub = self.create_publisher(PiperStatusMsg, 'arm_status', 1)
         self.end_pose_pub = self.create_publisher(Pose, 'end_pose', 1)
         self.servo_cmd_pub = self.create_publisher(Int32, 'servo/command_raw', 1)
         
-        # Set joint_ctrl_pub to None to indicate we don't publish to it
-        self.joint_ctrl_pub = None
         
         self.get_logger().info("Replay publishers created: joint_states, arm_status, end_pose, servo_cmd (NO joint_ctrl)")
     
@@ -301,12 +305,11 @@ Cannot start in {self.operation_mode} mode with existing publishers on {topic}.
         self.get_logger().info("Creating monitor publishers (minimal set - no control commands)")
         
         # Minimal publisher set - NO joint_ctrl_pub or servo_cmd_pub
-        self.joint_pub = self.create_publisher(JointState, 'joint_states_single', 1)
+        self.joint_pub = self.create_publisher(JointState, 'joint_states', 1)
         self.arm_status_pub = self.create_publisher(PiperStatusMsg, 'arm_status', 1)
         self.end_pose_pub = self.create_publisher(Pose, 'end_pose', 1)
         
         # Set control publishers to None to indicate we don't publish to them
-        self.joint_ctrl_pub = None
         self.servo_cmd_pub = None
         
         self.get_logger().info("Monitor publishers created: joint_states, arm_status, end_pose (NO control commands)")
@@ -452,10 +455,18 @@ Cannot start in {self.operation_mode} mode with existing publishers on {topic}.
 
     def _setup_monitor_mode(self):
         """Setup monitor mode configuration - pure monitoring, no robot control"""
-        self.get_logger().info("Configuring node for monitor mode")
+        self.get_logger().info(f"Configuring node for monitor mode (source: {self.monitor_source})")
         
         # Initialize monitor mode flag for safety guards
         self._monitor_mode_active = True
+        
+        # Log mode-specific behavior
+        if self.monitor_source == 'gello':
+            self.get_logger().info("Monitor mode: Gello hardware monitoring enabled")
+            self.get_logger().info("Monitor mode: Gello nodes will be launched for hardware input")
+        else:  # lerobot
+            self.get_logger().info("Monitor mode: LeRobot external monitoring enabled")
+            self.get_logger().info("Monitor mode: Listening for external joint commands")
         
         # Start rosbridge server for monitor mode
         if self.use_rosbridge:
@@ -545,10 +556,10 @@ Cannot start in {self.operation_mode} mode with existing publishers on {topic}.
     def _check_for_stale_publishers(self):
         """Check for stale publishers on critical topics and warn if found"""
         try:
-            # Check if there are existing publishers on joint_ctrl_single
-            publishers = self.get_publishers_info_by_topic('/joint_ctrl_single')
+            # Check if there are existing publishers on joint_ctrl
+            publishers = self.get_publishers_info_by_topic('/joint_ctrl')
             if publishers:
-                self.get_logger().warn(f"Found {len(publishers)} existing publishers on /joint_ctrl_single")
+                self.get_logger().warn(f"Found {len(publishers)} existing publishers on /joint_ctrl")
                 for pub in publishers:
                     self.get_logger().warn(f"  - {pub.node_name} (namespace: {pub.node_namespace})")
                 self.get_logger().warn("This may cause conflicts with LeRobot. Consider restarting if issues occur.")
@@ -564,7 +575,7 @@ Cannot start in {self.operation_mode} mode with existing publishers on {topic}.
         # Default monitored topics if none specified
         if not self.monitor_topics:
             self.monitor_topics = [
-                '/joint_ctrl_single',
+                '/joint_ctrl',
                 '/joint_states',
                 '/arm_status',
                 '/end_pose'
@@ -573,8 +584,8 @@ Cannot start in {self.operation_mode} mode with existing publishers on {topic}.
         # Create monitoring subscriptions for joint control commands
         self._monitor_joint_sub = self.create_subscription(
             JointState, 
-            'joint_ctrl_single', 
-            lambda msg: self._monitor_message_callback('/joint_ctrl_single', msg),
+            'joint_ctrl', 
+            lambda msg: self._monitor_message_callback('/joint_ctrl', msg),
             qos_profile_sensor_data
         )
         
@@ -599,6 +610,7 @@ Cannot start in {self.operation_mode} mode with existing publishers on {topic}.
         )
         
         self.get_logger().info(f"Monitor mode logging configured:")
+        self.get_logger().info(f"  Source: {self.monitor_source}")
         self.get_logger().info(f"  Format: {self.monitor_log_format}")
         self.get_logger().info(f"  Rate interval: {self.monitor_rate_interval}s")
         self.get_logger().info(f"  Monitored topics: {self.monitor_topics}")
@@ -606,6 +618,7 @@ Cannot start in {self.operation_mode} mode with existing publishers on {topic}.
         # Log initial monitor mode status (skip for positions format)
         if self.monitor_log_format != 'positions':
             print(f"\n=== MONITOR MODE STARTED ===")
+            print(f"Source: {self.monitor_source}")
             print(f"Format: {self.monitor_log_format}")
             print(f"Topics: {self.monitor_topics}")
             print(f"Statistics interval: {self.monitor_rate_interval}s")
@@ -717,6 +730,7 @@ Cannot start in {self.operation_mode} mode with existing publishers on {topic}.
         log_entry = {
             "timestamp": datetime.now().isoformat(),
             "mode": "monitor",
+            "monitor_source": self.monitor_source,
             "topic": topic_name,
             "message_count": stats['count'],
             "rate_hz": round(avg_rate, 2),
@@ -766,17 +780,18 @@ Cannot start in {self.operation_mode} mode with existing publishers on {topic}.
 
     def _log_positions_format(self, topic_name, msg, stats):
         """Log message in positions-only format - simplest possible output"""
-        # Focus on joint-related topics for consistent output format
-        if topic_name not in ['/joint_states', '/joint_ctrl_single']:
-            return  # Skip non-joint topics for positions format
+        # Only log joint commands, not simulated joint states
+        if topic_name != '/joint_ctrl':
+            return  # Only output actual commands, not simulated states
             
         # Extract joint positions (6 main joints only)
         positions = self._extract_joint_positions(msg)
         
         if positions is not None and len(positions) == 6:
-            # Only output if we have exactly 6 joint values for consistency
-            formatted = " ".join([f"{pos:.2f}" for pos in positions])
-            print(formatted)
+            # Only output if positions are not all zeros (actual command received)
+            if any(abs(pos) > 0.001 for pos in positions):  # Threshold to ignore near-zero values
+                formatted = " ".join([f"{pos:.2f}" for pos in positions])
+                print(formatted)
 
     def _extract_joint_positions(self, msg):
         """Extract and validate joint positions"""
@@ -868,8 +883,8 @@ Cannot start in {self.operation_mode} mode with existing publishers on {topic}.
         """Estimate number of connected clients based on message activity"""
         # Simplified estimation - in a real implementation, you'd query rosbridge
         # For now, assume 1 client if we're receiving messages regularly
-        if '/joint_ctrl_single' in self._message_stats:
-            stats = self._message_stats['/joint_ctrl_single']
+        if '/joint_ctrl' in self._message_stats:
+            stats = self._message_stats['/joint_ctrl']
             if stats['rates'] and len(stats['rates']) > 0:
                 recent_rate = sum(stats['rates'][-3:]) / len(stats['rates'][-3:])
                 return 1 if recent_rate > 0.1 else 0
@@ -893,7 +908,10 @@ Cannot start in {self.operation_mode} mode with existing publishers on {topic}.
 
     def publish_thread(self):
         """Mode-aware publish thread"""
-        rate = self.create_rate(100)  # 100 Hz
+        if self.operation_mode == 'monitor':
+            rate = self.create_rate(5)  # 5 Hz for monitor mode
+        else:
+            rate = self.create_rate(100)  # 100 Hz for teleop/replay
         self.get_logger().info(f"Starting publish loop for {self.operation_mode} mode")
         
         # Move enable check here - run ONCE at startup like old code
@@ -967,7 +985,6 @@ Cannot start in {self.operation_mode} mode with existing publishers on {topic}.
         self.PublishArmState()
         self.PublishArmJointAndGripper()
         self._process_latest_joint_command()
-        self.PublishArmCtrlAndGripper()
         self.PublishArmEndPose()
         
         # Periodically log the current end pose (every 5 seconds)
@@ -1062,26 +1079,6 @@ Cannot start in {self.operation_mode} mode with existing publishers on {topic}.
         if self._is_monitor_mode_active():
             self._monitor_message_callback('/joint_states', self.joint_states)
 
-    def PublishArmCtrlAndGripper(self):
-        # Hardware validation for safety
-        if not self._has_hardware_connection():
-            self.get_logger().error("PublishArmCtrlAndGripper: Hardware connection required but not available")
-            return
-            
-        # Only publish if joint_ctrl_pub exists (teleop mode only)
-        if self.joint_ctrl_pub is not None:
-            self.joint_ctrl.header.stamp = self.get_clock().now().to_msg()
-            joint_0: float = (self.piper.GetArmJointCtrl().joint_ctrl.joint_1/1000) * 0.017444
-            joint_1: float = (self.piper.GetArmJointCtrl().joint_ctrl.joint_2/1000) * 0.017444
-            joint_2: float = (self.piper.GetArmJointCtrl().joint_ctrl.joint_3/1000) * 0.017444
-            joint_3: float = (self.piper.GetArmJointCtrl().joint_ctrl.joint_4/1000) * 0.017444
-            joint_4: float = (self.piper.GetArmJointCtrl().joint_ctrl.joint_5/1000) * 0.017444
-            joint_5: float = (self.piper.GetArmJointCtrl().joint_ctrl.joint_6/1000) * 0.017444
-            joint_6: float = self.piper.GetArmGripperCtrl().gripper_ctrl.grippers_angle/1000000
-            self.joint_ctrl.position = [joint_0, joint_1, joint_2, joint_3, joint_4, joint_5, joint_6]  # Example values
-            self.joint_ctrl_pub.publish(self.joint_ctrl)
-        else:
-            self.get_logger().debug(f"Skipping joint_ctrl publish - not available in {self.operation_mode} mode")
 
     def PublishArmEndPose(self):
         # Hardware validation for safety
@@ -1163,7 +1160,7 @@ Cannot start in {self.operation_mode} mode with existing publishers on {topic}.
         """
         # Monitor mode logging (lightweight)
         if self._is_monitor_mode_active():
-            self._monitor_message_callback('/joint_ctrl_single', joint_data)
+            self._monitor_message_callback('/joint_ctrl', joint_data)
         
         with self._joint_cmd_lock:
             # Only keep reference to the newest message; older ones will be GC-ed
@@ -1186,6 +1183,7 @@ Cannot start in {self.operation_mode} mode with existing publishers on {topic}.
         # Monitor mode safety guard
         if self._block_robot_control("_process_latest_joint_command"):
             return
+
 
         factor = 57324.840764  # 1000*180/3.14
 

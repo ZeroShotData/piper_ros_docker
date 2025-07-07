@@ -15,10 +15,13 @@ Usage:
 
 from launch import LaunchDescription
 from launch_ros.actions import Node
-from launch.actions import DeclareLaunchArgument, ExecuteProcess, TimerAction
+from launch.actions import DeclareLaunchArgument, ExecuteProcess, TimerAction, OpaqueFunction, SetLaunchConfiguration, RegisterEventHandler, Shutdown
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch.conditions import IfCondition, UnlessCondition
+from launch.event_handlers import OnProcessExit
 import os
+import yaml
+import pathlib
 
 
 def get_mode_defaults(mode, overrides=None):
@@ -83,12 +86,6 @@ def generate_launch_description():
         description='Operation mode: teleop (with Gello), replay (websocket control), or monitor (pure monitoring)'
     )
 
-    can_port_arg = DeclareLaunchArgument(
-        'can_port',
-        default_value='can0',
-        description='CAN port used by the Piper controller.'
-    )
-
     auto_enable_arg = DeclareLaunchArgument(
         'auto_enable',
         default_value=PythonExpression([
@@ -103,10 +100,20 @@ def generate_launch_description():
         description='Launch rviz visualisation.'
     )
 
+    # Monitor mode source argument (declared before gello_exist_arg)
+    monitor_source_arg = DeclareLaunchArgument(
+        'monitor_source',
+        default_value='lerobot',
+        choices=['lerobot', 'gello'],
+        description='Source of joint commands in monitor mode: lerobot (external commands) or gello (hardware controller)'
+    )
+
     gello_exist_arg = DeclareLaunchArgument(
         'gello_exist',
         default_value=PythonExpression([
-            "'true' if '", LaunchConfiguration('operation_mode'), "' == 'teleop' else 'false'"
+            "'true' if ('", LaunchConfiguration('operation_mode'), "' == 'teleop' or ('", 
+            LaunchConfiguration('operation_mode'), "' == 'monitor' and '", 
+            LaunchConfiguration('monitor_source'), "' == 'gello')) else 'false'"
         ]),
         description='Whether the Gello bridge is running.'
     )
@@ -159,12 +166,48 @@ def generate_launch_description():
         description='Monitor mode statistics reporting interval in seconds'
     )
 
-    # -----------------------
-    # Hardware Setup (inline, not in monitor mode)
-    # -----------------------
-    # Run CAN configuration in all modes except pure monitor
+                                                                   # Derive CAN interface name and USB address from YAML (no hard-coding)
+    def _load_can_params(context):
+        import yaml, pathlib
+        cfg_path = context.perform_substitution(LaunchConfiguration('gripper_config'))
+        cfg_file = pathlib.Path(cfg_path)
+        if not cfg_file.is_file():
+            raise RuntimeError(f'Cannot read gripper_config: {cfg_file}')
+
+        data = yaml.safe_load(cfg_file.read_text())
+        robot_cfg = data.get('robot', {})
+
+        # Which side (left/right) is this config describing?
+        arm_side = robot_cfg.get('arm_side')
+        if arm_side is None:
+            raise RuntimeError(f'Missing robot.arm_side in {cfg_file}')
+
+        arms_cfg = robot_cfg.get('arms', {})
+        arm_cfg = arms_cfg.get(arm_side, {})
+
+        # Optional usb address in robot.usb_address OR per-arm entry
+        usb_addr = robot_cfg.get('usb_address') or arm_cfg.get('usb_address', '')
+
+        # Interface name: use per-arm can_port if given, else generate deterministic name
+        can_iface = arm_cfg.get('can_port', f'can_{arm_side}')
+
+        return [
+            SetLaunchConfiguration('can_port', can_iface),
+            SetLaunchConfiguration('can_usb_addr', usb_addr),
+        ]
+
+    can_param_loader = OpaqueFunction(function=_load_can_params)
+
+    # CAN activation command – bitrate fixed at 1 Mbit/s, USB address optional via YAML robot.usb_address
+    can_activate_cmd = [
+        'bash', '/app/can_activate.sh',
+        LaunchConfiguration('can_port'),
+        '1000000',
+        LaunchConfiguration('can_usb_addr'),
+    ]
+
     can_activate_proc = ExecuteProcess(
-        cmd=['bash', '/app/can_activate.sh', 'can0', '1000000', '1-1.1:1.0'],
+        cmd=can_activate_cmd,
         name='activate_can',
         output='screen',
         condition=UnlessCondition(
@@ -209,7 +252,8 @@ def generate_launch_description():
         }],
         condition=UnlessCondition(
             PythonExpression([
-                "'", LaunchConfiguration('operation_mode'), "' == 'monitor'"
+                "'", LaunchConfiguration('operation_mode'), "' == 'monitor' and '",
+                LaunchConfiguration('monitor_source'), "' == 'lerobot'"
             ])
         )
     )
@@ -241,8 +285,9 @@ def generate_launch_description():
             'operation_mode': LaunchConfiguration('operation_mode'),
             'monitor_log_format': LaunchConfiguration('monitor_log_format'),
             'monitor_rate_interval': LaunchConfiguration('monitor_rate_interval'),
+            'monitor_source': LaunchConfiguration('monitor_source'),
         }],
-        remappings=[('joint_states_single', 'joint_states')],
+        # No remappings needed; controller publishes standardized topic names
     )
 
     # Runtime safety guard (always included except monitor mode)
@@ -278,8 +323,9 @@ def generate_launch_description():
     # -----------------------
     gello_entities = []
     
-    # Determine if PiperGello sources are present
-    for _gello_dir in ('/PiperGello', '/app/PiperGello'):
+    # Search order: prefer the copy mounted inside /app (developer workspace)
+    # so live-edited code takes precedence over the external reference.
+    for _gello_dir in ('/app/PiperGello', '/PiperGello'):
         launch_nodes_path = os.path.join(_gello_dir, 'experiments', 'launch_nodes.py')
         run_env_path = os.path.join(_gello_dir, 'experiments', 'run_env.py')
         if os.path.isfile(launch_nodes_path) and os.path.isfile(run_env_path):
@@ -290,12 +336,6 @@ def generate_launch_description():
                 '--robot=piper --robot-ip=localhost'
             )
 
-            run_env_cmd = (
-                f'PIPER_DIR={_gello_dir}; '
-                'exec python3 ${PIPER_DIR}/experiments/run_env.py --agent=gello '
-                '--gello_port=/dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTA7NMKV-if00-port0'
-            )
-
             gello_launch_nodes_proc = ExecuteProcess(
                 cmd=['bash', '-c', launch_nodes_cmd],
                 name='gello_launch_nodes',
@@ -303,7 +343,9 @@ def generate_launch_description():
                 log_cmd=True,
                 condition=IfCondition(
                     PythonExpression([
-                        "'", LaunchConfiguration('operation_mode'), "' == 'teleop' and '", LaunchConfiguration('gello_exist'), "' == 'true'"
+                        "'", LaunchConfiguration('operation_mode'), "' == 'teleop' or ('", 
+                        LaunchConfiguration('operation_mode'), "' == 'monitor' and '", 
+                        LaunchConfiguration('monitor_source'), "' == 'gello')"
                     ])
                 ),
                 env={
@@ -314,34 +356,64 @@ def generate_launch_description():
             )
 
             gello_run_env_proc = ExecuteProcess(
-                cmd=['bash', '-c', run_env_cmd],
+                cmd=[
+                    'python3',
+                    f'{_gello_dir}/experiments/run_env.py',
+                    '--agent=gello',
+                    '--config_file', LaunchConfiguration('gripper_config')
+                ],
                 name='gello_run_env',
                 output='screen',
                 log_cmd=True,
                 condition=IfCondition(
                     PythonExpression([
-                        "'", LaunchConfiguration('operation_mode'), "' == 'teleop' and '", LaunchConfiguration('gello_exist'), "' == 'true'"
+                        "'", LaunchConfiguration('operation_mode'), "' == 'teleop' or ('", 
+                        LaunchConfiguration('operation_mode'), "' == 'monitor' and '", 
+                        LaunchConfiguration('monitor_source'), "' == 'gello')"
                     ])
                 ),
                 env={
                     'PYTHONUNBUFFERED': '1', 
                     'PYTHONPATH': f'{_gello_dir}:${{PYTHONPATH}}',
+                    'PIPER_DIR': _gello_dir,
                     'DISABLE_GRIPPER_AUTO_MOVE': 'true'
                 },
             )
 
             gello_entities.extend([gello_launch_nodes_proc, gello_run_env_proc])
+            
+            # Create OnProcessExit handler for gello_run_env process (safety mechanism)
+            gello_exit_handler = RegisterEventHandler(
+                OnProcessExit(
+                    target_action=gello_run_env_proc,
+                    on_exit=[
+                        Shutdown(reason='Gello process exited - shutting down for safety')
+                    ]
+                ),
+                condition=IfCondition(
+                    PythonExpression([
+                        "'", LaunchConfiguration('operation_mode'), "' == 'teleop' or ('", 
+                        LaunchConfiguration('operation_mode'), "' == 'monitor' and '", 
+                        LaunchConfiguration('monitor_source'), "' == 'gello')"
+                    ])
+                )
+            )
+            
             break  # Found valid Gello dir, no need to search further
 
     # Wrap Gello entities in TimerAction to delay startup until rosbridge is ready
     delayed_gello_entities = []
+    gello_exit_handlers = []
     if gello_entities:
         delayed_gello_entities = [
             TimerAction(
-                period=3.0,  # 3 second delay
+                period=5.0,  # 5 second delay to ensure rosbridge is fully ready
                 actions=gello_entities
             )
         ]
+        # Also need to add the exit handler (not delayed)
+        if 'gello_exit_handler' in locals():
+            gello_exit_handlers = [gello_exit_handler]
 
     # -----------------------
     # Launch Description (deterministic order)
@@ -349,8 +421,9 @@ def generate_launch_description():
     return LaunchDescription([
         # (a) Declare all arguments
         operation_mode_arg,
+        monitor_source_arg,
         gello_exist_arg,
-        can_port_arg,
+        can_param_loader,
         auto_enable_arg,
         gripper_exist_arg,
         gripper_val_mutiple_arg,
@@ -376,4 +449,7 @@ def generate_launch_description():
         
         # (e) Gello helpers (teleop mode only, delayed startup)
         *delayed_gello_entities,
+        
+        # (f) Safety handlers (teleop mode only)
+        *gello_exit_handlers,
     ])

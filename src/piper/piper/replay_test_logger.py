@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Replay test logger
 
-Subscribes to /joint_ctrl_single and periodically prints out the number
+Subscribes to /joint_ctrl and periodically prints out the number
 of messages received together with an estimated frequency.  Intended to
 verify connectivity between the capture computer (publishing via
 rosbridge-websocket) and the Piper ROS 2 environment.
@@ -19,7 +19,7 @@ class ReplayLogger(Node):
         # Depth 10 queue, default reliability (best effort OK)
         self._sub = self.create_subscription(
             JointState,
-            '/joint_ctrl_single',
+            '/joint_ctrl',
             self._callback,
             10,
         )

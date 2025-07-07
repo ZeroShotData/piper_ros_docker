@@ -1,0 +1,19 @@
+metadata:
+  config_name: choupette-fred
+  created_date: '2025-07-02T22:24:02.535069'
+  robot_serial: PIPER_001
+  description: ''
+piper_gripper:
+  servo_id: 1
+  device: /dev/ttyACM1
+  open_ticks: 1650
+  close_ticks: 1150
+  default_torque: 1000
+gello_gripper:
+  servo_id: 7
+  port: /dev/ttyUSB1
+  open_degrees: 176.30664062499997
+  close_degrees: 150.30664062499994
+  effort_range:
+  - 0.5
+  - 3.0

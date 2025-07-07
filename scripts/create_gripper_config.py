@@ -43,6 +43,18 @@ except ImportError:
 GELLO_AVAILABLE = False
 DynamixelDriver = None
 
+# ------------------ Tick conversion helpers ------------------
+# Dynamixel/Piper servos use 0-4095 ticks for one full rotation.
+
+def radians_to_ticks(rad: float) -> int:
+    """Convert radians to servo ticks (0-4095)."""
+    return int(rad * 2048 / math.pi)
+
+
+def degrees_to_ticks(deg: float) -> int:
+    """Convert degrees to servo ticks (0-4095)."""
+    return int(deg * 2048 / 180.0)
+
 
 class KeyReader:
     """Context manager for reading single keystrokes"""
@@ -104,7 +116,7 @@ def main():
     # Piper options
     parser.add_argument('--piper-device', default='/dev/ttyACM0',
                        help='Piper servo device')
-    parser.add_argument('--piper-id', type=int, default=6,
+    parser.add_argument('--piper-id', type=int, default=4,
                        help='Piper servo ID')
     parser.add_argument('--piper-torque', type=int, default=1000,
                        help='Default Piper torque limit')
@@ -210,17 +222,19 @@ def main():
                 servo_id=args.gello_id
             )
             
-            config['gello_gripper'] = {
-                'servo_id': args.gello_id,
-                'port': args.gello_port,
-                'open_degrees': gello_open,
-                'close_degrees': gello_close,
-                'effort_range': [args.gello_effort_min, args.gello_effort_max]
+            config['gello'] = {
+                'device': args.gello_port,  # Single device for both arm (IDs 1-6) and gripper (ID 7)
+                'gripper_servo_id': args.gello_id,
+                'gripper_open_degrees': gello_open,
+                'gripper_close_degrees': gello_close,
+                'gripper_effort_range': [args.gello_effort_min, args.gello_effort_max]
             }
             
+            open_ticks = degrees_to_ticks(gello_open)
+            close_ticks = degrees_to_ticks(gello_close)
             print(f"\n✅ Gello calibration complete:")
-            print(f"   Open: {gello_open:.1f}°")
-            print(f"   Close: {gello_close:.1f}°")
+            print(f"   Open: {gello_open:.1f}° ({open_ticks} ticks)")
+            print(f"   Close: {gello_close:.1f}° ({close_ticks} ticks)")
         except Exception as e:
             print(f"\n❌ Gello calibration failed: {e}")
     
@@ -400,8 +414,8 @@ def calibrate_gello_gripper(port, servo_id):
     
     def deg(rad):
         return math.degrees(rad)
-    
-    print(f"\n📍 Starting position: {deg(curr_angle):.1f}°")
+
+    print(f"\n📍 Starting position: {deg(curr_angle):.1f}° ({radians_to_ticks(curr_angle)} ticks)")
     print("\n" + "="*40)
     print("GELLO CALIBRATION INSTRUCTIONS:")
     print("="*40)
@@ -445,11 +459,11 @@ def calibrate_gello_gripper(port, servo_id):
                 elif key == 'o':
                     target = open_angle
                     moved = True
-                    print(f"\n➡️  Testing OPEN position: {deg(open_angle):.1f}°")
+                    print(f"\n➡️  Testing OPEN position: {deg(open_angle):.1f}° ({radians_to_ticks(open_angle)} ticks)")
                 elif key == 'c':
                     target = close_angle
                     moved = True
-                    print(f"\n➡️  Testing CLOSE position: {deg(close_angle):.1f}°")
+                    print(f"\n➡️  Testing CLOSE position: {deg(close_angle):.1f}° ({radians_to_ticks(close_angle)} ticks)")
                 elif key == ' ':
                     if abs(deg(open_angle - close_angle)) < 1e-3:
                         print("\n⚠️  Set open [ and close ] positions first – toggle skipped")
@@ -457,20 +471,20 @@ def calibrate_gello_gripper(port, servo_id):
                     target = close_angle if last_toggle == open_angle else open_angle
                     last_toggle = target
                     moved = True
-                    print(f"\n🔄 Toggle to {'CLOSE' if target == close_angle else 'OPEN'}: {deg(target):.1f}°")
+                    print(f"\n🔄 Toggle to {'CLOSE' if target == close_angle else 'OPEN'}: {deg(target):.1f}° ({radians_to_ticks(target)} ticks)")
                 elif key == '[':
                     open_angle = curr_angle
-                    print(f"\n✅ Set OPEN position: {deg(open_angle):.1f}°")
+                    print(f"\n✅ Set OPEN position: {deg(open_angle):.1f}° ({radians_to_ticks(open_angle)} ticks)")
                 elif key == ']':
                     close_angle = curr_angle
-                    print(f"\n✅ Set CLOSE position: {deg(close_angle):.1f}°")
+                    print(f"\n✅ Set CLOSE position: {deg(close_angle):.1f}° ({radians_to_ticks(close_angle)} ticks)")
                 else:
                     continue
                 
                 if moved:
                     driver.set_single_joint_position(servo_id, target)
                     curr_angle = target
-                    print(f"Angle: {deg(curr_angle):6.1f}° (Open:{deg(open_angle):6.1f}° Close:{deg(close_angle):6.1f}°)", end='\r')
+                    print(f"Angle: {deg(curr_angle):6.1f}° ({radians_to_ticks(curr_angle):4d}) (Open:{deg(open_angle):6.1f}° Close:{deg(close_angle):6.1f}°)", end='\r')
                 
                 time.sleep(0.05)
                 

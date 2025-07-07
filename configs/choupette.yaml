@@ -21,7 +21,7 @@ robot:
       enable_topic: /enable_flag
       servo_topic: /servo/command_raw
 gello:
-  device: /dev/ttyUSB0
+  device: /dev/ttyUSB1
   gripper_servo_id: 7
   gripper_open_degrees: 184.18359375000006
   gripper_close_degrees: 148.18359375
@@ -30,7 +30,7 @@ gello:
   - 3.0
   # Joint calibration parameters
   joint_ids: [1, 2, 3, 4, 5, 6]
-  joint_offsets: [3.174, 7.869, 3.091, 4.689, 0.017, 3.139]  # radians
+  joint_offsets: [4.709, 6.236, 3.163, 3.148, 3.189, 1.562]  # radians
   joint_signs: [1, -1, -1, 1, -1, 1]
   # Raw ranges observed during calibration (for reference)
   joint_raw_ranges:

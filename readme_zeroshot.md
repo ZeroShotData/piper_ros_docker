@@ -18,8 +18,11 @@ ros2 launch piper piper_unified.launch.py operation_mode:=teleop gripper_config:
 # Replay: Remote control via LeRobot/websocket
 ros2 launch piper piper_unified.launch.py operation_mode:=replay gripper_config:=/app/configs/my_setup.yaml auto_enable:=true
 
-# Monitor: Read-only observation and debugging
-ros2 launch piper piper_unified.launch.py operation_mode:=monitor gripper_config:=/app/configs/my_setup.yaml
+# Monitor: Read-only observation and debugging (lerobot source - default)
+ros2 launch piper piper_unified.launch.py operation_mode:=monitor
+
+# Monitor: Hardware monitoring via Gello device
+ros2 launch piper piper_unified.launch.py operation_mode:=monitor monitor_source:=gello gripper_config:=/app/configs/my_setup.yaml
 ```
 
 ## Operation Modes & Code Examples
@@ -95,27 +98,26 @@ joint_pub.publish(roslibpy.Message(joint_msg))
 
 ### Monitor Mode  
 **Purpose**: Safe monitoring without robot control  
-**Architecture**: LeRobot → WebSocket → RosBridge → **DIRECTLY** to `/joint_ctrl_single` → Monitor (subscribe only)  
+**Sub-modes**: `lerobot` (external) or `gello` (hardware)  
 
 ```bash
-# JSON monitoring (full data)
+# LeRobot monitoring (default) - external commands
 ros2 launch piper piper_unified.launch.py \
     operation_mode:=monitor \
-    gripper_config:=/app/configs/my_setup.yaml \
-    monitor_log_format:=json \
-    monitor_rate_interval:=3.0
+    monitor_log_format:=json
 
-# Positions-only (minimal overhead)
+# Gello hardware monitoring - reads from physical device
 ros2 launch piper piper_unified.launch.py \
     operation_mode:=monitor \
+    monitor_source:=gello \
+    gripper_config:=/app/configs/my_setup.yaml
+
+# Data collection pipeline (only outputs when Gello moves)
+ros2 launch piper piper_unified.launch.py \
+    operation_mode:=monitor \
+    monitor_source:=gello \
     gripper_config:=/app/configs/my_setup.yaml \
     monitor_log_format:=positions
-
-# Data collection pipeline
-ros2 launch piper piper_unified.launch.py \
-    operation_mode:=monitor \
-    gripper_config:=/app/configs/my_setup.yaml \
-    monitor_log_format:=positions > joint_data.log
 ```
 
 **Monitor Output Examples**:
@@ -123,7 +125,7 @@ ros2 launch piper piper_unified.launch.py \
 # JSON format
 {"timestamp": "2025-06-27T20:30:15", "topic": "/joint_ctrl_single", "rate_hz": 100.0, "message": {"positions": [0.12, -0.46, 0.79, 0.01, -0.35, 0.68, 0.8]}}
 
-# Positions format  
+# Positions format (only when joints move)
 0.12 -0.46 0.79 0.01 -0.35 0.68
 
 # Structured format
@@ -167,6 +169,7 @@ auto_enable:=true|false               # Auto-configured per mode
 gripper_exist:=true|false             # Auto-configured per mode
 
 # Monitor-specific
+monitor_source:=lerobot|gello         # Monitor mode sub-type
 monitor_log_format:=json|structured|simple|positions
 monitor_rate_interval:=5.0            # Statistics interval
 ```

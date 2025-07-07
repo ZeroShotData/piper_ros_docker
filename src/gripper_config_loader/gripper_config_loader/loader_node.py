@@ -72,7 +72,7 @@ class GripperConfigLoader(Node):
         # ------------------------------------------------------------------
         sections_required = list(MANDATORY_SECTIONS)
         if self.get_parameter("gello_exist").get_parameter_value().bool_value:
-            sections_required.append("gello_gripper")
+            sections_required.append("gello")
 
         missing_sections = [sec for sec in sections_required if sec not in data]
         if missing_sections:
@@ -95,6 +95,18 @@ class GripperConfigLoader(Node):
                 # Handle gripper and other sections
                 for key, value in content.items():
                     full_name = f"gripper/{section}/{key}"
+                    # Sanitize value: ROS params can't take nested lists/dicts.
+                    if isinstance(value, (list, tuple)) and value:
+                        # Check if it's a nested list (list of non-scalars)
+                        if not all(isinstance(x, (bool, int, float, str)) for x in value):
+                            # Store as YAML-formatted string to preserve structure
+                            import yaml as _yaml
+                            value = _yaml.safe_dump(value, default_flow_style=True)
+                    elif isinstance(value, dict):
+                        # Flatten dicts as YAML string as well
+                        import yaml as _yaml
+                        value = _yaml.safe_dump(value, default_flow_style=True)
+
                     self.declare_parameter(full_name, value)
 
         self.get_logger().info(f"Published configuration parameters from {path}")
