@@ -94,6 +94,14 @@ def generate_launch_description():
         description='Automatically enable the Piper controller.'
     )
 
+    # Teleop input type (only relevant in teleop mode)
+    teleop_input_arg = DeclareLaunchArgument(
+        'teleop_input',
+        default_value='gello',
+        choices=['gello', 'keyboard'],
+        description='Input device for teleop mode: gello (default) or keyboard'
+    )
+
     rviz_ctrl_flag_arg = DeclareLaunchArgument(
         'rviz_ctrl_flag',
         default_value='false',
@@ -108,20 +116,25 @@ def generate_launch_description():
         description='Source of joint commands in monitor mode: lerobot (external commands) or gello (hardware controller)'
     )
 
+    # Gello is considered running only in two cases:
+    #   1) teleop mode AND teleop_input==gello
+    #   2) monitor mode AND monitor_source==gello
     gello_exist_arg = DeclareLaunchArgument(
         'gello_exist',
         default_value=PythonExpression([
-            "'true' if ('", LaunchConfiguration('operation_mode'), "' == 'teleop' or ('", 
-            LaunchConfiguration('operation_mode'), "' == 'monitor' and '", 
+            "'true' if (('", LaunchConfiguration('operation_mode'), "' == 'teleop' and '",
+            LaunchConfiguration('teleop_input'), "' == 'gello') or ('",
+            LaunchConfiguration('operation_mode'), "' == 'monitor' and '",
             LaunchConfiguration('monitor_source'), "' == 'gello')) else 'false'"
         ]),
         description='Whether the Gello bridge is running.'
     )
 
+    # Gripper is present in all modes except pure monitor.
     gripper_exist_arg = DeclareLaunchArgument(
         'gripper_exist',
         default_value=PythonExpression([
-            "'false' if ('", LaunchConfiguration('operation_mode'), "' == 'monitor' or '", LaunchConfiguration('gello_exist'), "' == 'false') else 'true'"
+            "'false' if '", LaunchConfiguration('operation_mode'), "' == 'monitor' else 'true'"
         ]),
         description='Whether a gripper is attached.'
     )
@@ -283,6 +296,7 @@ def generate_launch_description():
             'rviz_ctrl_flag': LaunchConfiguration('rviz_ctrl_flag'),
             'use_rosbridge': LaunchConfiguration('use_rosbridge'),
             'operation_mode': LaunchConfiguration('operation_mode'),
+            'teleop_input': LaunchConfiguration('teleop_input'),
             'monitor_log_format': LaunchConfiguration('monitor_log_format'),
             'monitor_rate_interval': LaunchConfiguration('monitor_rate_interval'),
             'monitor_source': LaunchConfiguration('monitor_source'),
@@ -343,7 +357,8 @@ def generate_launch_description():
                 log_cmd=True,
                 condition=IfCondition(
                     PythonExpression([
-                        "'", LaunchConfiguration('operation_mode'), "' == 'teleop' or ('", 
+                        "('", LaunchConfiguration('operation_mode'), "' == 'teleop' and '",
+                        LaunchConfiguration('teleop_input'), "' == 'gello') or ('",
                         LaunchConfiguration('operation_mode'), "' == 'monitor' and '", 
                         LaunchConfiguration('monitor_source'), "' == 'gello')"
                     ])
@@ -367,7 +382,8 @@ def generate_launch_description():
                 log_cmd=True,
                 condition=IfCondition(
                     PythonExpression([
-                        "'", LaunchConfiguration('operation_mode'), "' == 'teleop' or ('", 
+                        "('", LaunchConfiguration('operation_mode'), "' == 'teleop' and '",
+                        LaunchConfiguration('teleop_input'), "' == 'gello') or ('",
                         LaunchConfiguration('operation_mode'), "' == 'monitor' and '", 
                         LaunchConfiguration('monitor_source'), "' == 'gello')"
                     ])
@@ -392,7 +408,8 @@ def generate_launch_description():
                 ),
                 condition=IfCondition(
                     PythonExpression([
-                        "'", LaunchConfiguration('operation_mode'), "' == 'teleop' or ('", 
+                        "('", LaunchConfiguration('operation_mode'), "' == 'teleop' and '",
+                        LaunchConfiguration('teleop_input'), "' == 'gello') or ('",
                         LaunchConfiguration('operation_mode'), "' == 'monitor' and '", 
                         LaunchConfiguration('monitor_source'), "' == 'gello')"
                     ])
@@ -416,11 +433,34 @@ def generate_launch_description():
             gello_exit_handlers = [gello_exit_handler]
 
     # -----------------------
+    # Keyboard teleop component (teleop mode, keyboard input)
+    # -----------------------
+    # Print instructions for keyboard mode
+    def print_keyboard_instructions(context):
+        if (context.perform_substitution(LaunchConfiguration('operation_mode')) == 'teleop' and
+            context.perform_substitution(LaunchConfiguration('teleop_input')) == 'keyboard'):
+            print("\n" + "="*60)
+            print("KEYBOARD TELEOP MODE")
+            print("="*60)
+            print("To control the robot with keyboard, open a new terminal and run:")
+            print("\n  ros2 run piper keyboard_joint_teleop")
+            print("\nKeyboard controls:")
+            print("  1-7 : Select joint (1-6 for arm, 7 for gripper)")
+            print("  +/- : Increase/decrease selected joint")
+            print("   h  : Show help")
+            print("   q  : Quit")
+            print("="*60 + "\n")
+        return []
+    
+    keyboard_instruction_action = OpaqueFunction(function=print_keyboard_instructions)
+
+    # -----------------------
     # Launch Description (deterministic order)
     # -----------------------
     return LaunchDescription([
         # (a) Declare all arguments
         operation_mode_arg,
+        teleop_input_arg,
         monitor_source_arg,
         gello_exist_arg,
         can_param_loader,
@@ -446,6 +486,7 @@ def generate_launch_description():
         
         # (d) Conditional components
         replay_logger_node,   # Replay/monitor modes only
+        keyboard_instruction_action, # Print instructions for keyboard mode
         
         # (e) Gello helpers (teleop mode only, delayed startup)
         *delayed_gello_entities,

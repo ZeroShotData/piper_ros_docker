@@ -53,6 +53,7 @@ class PiperRosNode(Node):
         self.declare_parameter('rviz_ctrl_flag', False)
         self.declare_parameter('use_rosbridge', False)
         self.declare_parameter('operation_mode', 'teleop')
+        self.declare_parameter('teleop_input', 'gello')
         # Monitor mode specific parameters
         self.declare_parameter('monitor_log_format', 'json')
         self.declare_parameter('monitor_rate_interval', 5.0)
@@ -71,6 +72,7 @@ class PiperRosNode(Node):
         self.rviz_ctrl_flag = self.get_parameter('rviz_ctrl_flag').get_parameter_value().bool_value
         self.use_rosbridge = self.get_parameter('use_rosbridge').get_parameter_value().bool_value
         self.operation_mode = self.get_parameter('operation_mode').get_parameter_value().string_value
+        self.teleop_input = self.get_parameter('teleop_input').get_parameter_value().string_value
         # Monitor mode specific parameters
         self.monitor_log_format = self.get_parameter('monitor_log_format').get_parameter_value().string_value
         self.monitor_rate_interval = self.get_parameter('monitor_rate_interval').get_parameter_value().double_value
@@ -96,6 +98,8 @@ class PiperRosNode(Node):
         self.get_logger().info(f"rviz_ctrl_flag is {self.rviz_ctrl_flag}")
         self.get_logger().info(f"use_rosbridge is {self.use_rosbridge}")
         self.get_logger().info(f"operation_mode is {self.operation_mode}")
+        if self.operation_mode == 'teleop':
+            self.get_logger().info(f"teleop_input is {self.teleop_input}")
         if self.operation_mode == 'monitor':
             self.get_logger().info(f"monitor_log_format is {self.monitor_log_format}")
             self.get_logger().info(f"monitor_rate_interval is {self.monitor_rate_interval}")
@@ -238,8 +242,12 @@ class PiperRosNode(Node):
     def _get_critical_topics_for_mode(self):
         """Get list of topics that would conflict if we publish to them"""
         if self.operation_mode == 'teleop':
-            # Teleop mode needs exclusive access to joint_ctrl for Gello control
-            return ['/joint_ctrl']
+            # Teleop mode with Gello needs exclusive access to joint_ctrl
+            # But with keyboard input, the keyboard node publishes to joint_ctrl
+            if self.teleop_input == 'gello':
+                return ['/joint_ctrl']
+            else:  # keyboard
+                return []  # No critical topics - keyboard node needs to publish
         elif self.operation_mode == 'replay':
             # Replay mode should NOT publish to joint_ctrl - RosBridge handles it
             return []
