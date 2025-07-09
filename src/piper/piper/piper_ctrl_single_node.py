@@ -1265,14 +1265,13 @@ Cannot start in {self.operation_mode} mode with existing publishers on {topic}.
             # joint_data.position[6] is in range 0-1 (normalized gripper value)
             gripper_normalized = joint_data.position[6]
             
-            # Debug logging
-            self.get_logger().info(f"Gripper normalized value: {gripper_normalized}")
+            # self.get_logger().debug(f"Gripper normalized value: {gripper_normalized}")  # muted
             
             # Map 0-1 to servo ticks (0=open, 1=closed)
             # Reversed mapping: 0 -> CLOSE, 1 -> OPEN
             servo_ticks = int(SERVO_CLOSE_TICKS + (SERVO_OPEN_TICKS - SERVO_CLOSE_TICKS) * gripper_normalized)
             
-            self.get_logger().info(f"Publishing servo ticks: {servo_ticks}")
+            # self.get_logger().debug(f"Publishing servo ticks: {servo_ticks}")  # muted
             
             # Publish to servo (only if servo_cmd_pub exists - not available in monitor mode)
             if self.servo_cmd_pub is not None:

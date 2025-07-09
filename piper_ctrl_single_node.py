@@ -338,14 +338,13 @@ class PiperRosNode(Node):
                 # joint_6 is in range 0-1 (normalized gripper value)
                 gripper_normalized = joint_data.position[6] if len(joint_data.position) >= 7 else 0.0
                 
-                # Debug logging
-                self.get_logger().info(f"Gripper normalized value: {gripper_normalized}")
+                # self.get_logger().info(f"Gripper normalized value: {gripper_normalized}")  # muted – too verbose
                 
                 # Map 0-1 to servo ticks (0=open, 1=closed)
                 # Invert mapping: 0 -> CLOSE, 1 -> OPEN
                 servo_ticks = int(SERVO_CLOSE_TICKS + (SERVO_OPEN_TICKS - SERVO_CLOSE_TICKS) * gripper_normalized)
                 
-                self.get_logger().info(f"Publishing servo ticks: {servo_ticks}")
+                # self.get_logger().info(f"Publishing servo ticks: {servo_ticks}")  # muted – too verbose
                 
                 # Publish to servo
                 servo_msg = Int32()
