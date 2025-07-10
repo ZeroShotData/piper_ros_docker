@@ -12,44 +12,59 @@ python3 scripts/create_gripper_config.py --config-name my_setup
 
 ### 2. Launch Robot (Choose Your Mode)
 ```bash
-# Teleop: Direct control via Gello device
-ros2 launch piper piper_unified.launch.py operation_mode:=teleop gripper_config:=/app/configs/my_setup.yaml
+# Teleop: Direct control via Gello device (default)
+ros2 launch piper piper_unified.launch.py operation_mode:=teleop gripper_config:=/app/configs/baguette.yaml
+
+# Teleop: Keyboard control for testing
+ros2 launch piper piper_unified.launch.py operation_mode:=teleop teleop_input:=keyboard gripper_config:=/app/configs/baguette.yaml
 
 # Replay: Remote control via LeRobot/websocket
-ros2 launch piper piper_unified.launch.py operation_mode:=replay gripper_config:=/app/configs/my_setup.yaml auto_enable:=true
+ros2 launch piper piper_unified.launch.py operation_mode:=replay gripper_config:=/app/configs/baguette.yaml auto_enable:=true
 
 # Monitor: Read-only observation and debugging (lerobot source - default)
 ros2 launch piper piper_unified.launch.py operation_mode:=monitor
 
 # Monitor: Hardware monitoring via Gello device
-ros2 launch piper piper_unified.launch.py operation_mode:=monitor monitor_source:=gello gripper_config:=/app/configs/my_setup.yaml
+ros2 launch piper piper_unified.launch.py operation_mode:=monitor monitor_source:=gello gripper_config:=/app/configs/baguette.yaml
 ```
 
 ## Operation Modes & Code Examples
 
 ### Teleop Mode
-**Purpose**: Direct robot control via Gello teleoperation device  
-**Architecture**: Gello → Piper Node → Publishes to `/joint_ctrl_single` → Robot  
+**Purpose**: Direct robot control via Gello teleoperation device or keyboard  
+**Architecture**: Input Device → Piper Node → Publishes to `/joint_ctrl_single` → Robot  
 
+#### Gello Control (Default)
 ```bash
 # Launch teleop with auto-enable
 ros2 launch piper piper_unified.launch.py \
     operation_mode:=teleop \
-    gripper_config:=/app/configs/my_setup.yaml \
+    gripper_config:=/app/configs/baguette.yaml \
     auto_enable:=true
 
 # Launch teleop without gripper
 ros2 launch piper piper_unified.launch.py \
     operation_mode:=teleop \
-    gripper_config:=/app/configs/my_setup.yaml \
+    gripper_config:=/app/configs/baguette.yaml \
     gripper_exist:=false
 
 # Custom CAN interface
 ros2 launch piper piper_unified.launch.py \
     operation_mode:=teleop \
-    gripper_config:=/app/configs/my_setup.yaml \
+    gripper_config:=/app/configs/baguette.yaml \
     can_port:=can1
 ```
+
+#### Keyboard Control
+```bash
+# Terminal 1: Launch robot
+ros2 launch piper piper_unified.launch.py operation_mode:=teleop teleop_input:=keyboard gripper_config:=/app/configs/baguette.yaml
+
+# Terminal 2: Run keyboard controller  
+ros2 run piper keyboard_joint_teleop
+```
+
+**Controls**: `1-7` select joint, `+/-` move by ±0.05, `h` help, `q` quit
 
 ### Replay Mode
 **Purpose**: Remote control for dataset collection/playback  
@@ -59,20 +74,20 @@ ros2 launch piper piper_unified.launch.py \
 # Basic replay mode (auto-starts rosbridge)
 ros2 launch piper piper_unified.launch.py \
     operation_mode:=replay \
-    gripper_config:=/app/configs/my_setup.yaml \
+    gripper_config:=/app/configs/baguette.yaml \
     auto_enable:=true
 
 # Replay without gripper
 ros2 launch piper piper_unified.launch.py \
     operation_mode:=replay \
-    gripper_config:=/app/configs/my_setup.yaml \
+    gripper_config:=/app/configs/baguette.yaml \
     gripper_exist:=false \
     auto_enable:=true
 
 # Custom namespace for multiple arms
 ros2 launch piper piper_unified.launch.py \
     operation_mode:=replay \
-    gripper_config:=/app/configs/my_setup.yaml \
+    gripper_config:=/app/configs/baguette.yaml \
     auto_enable:=true \
     --ros-args -r __ns:=/arm1
 ```
@@ -110,13 +125,13 @@ ros2 launch piper piper_unified.launch.py \
 ros2 launch piper piper_unified.launch.py \
     operation_mode:=monitor \
     monitor_source:=gello \
-    gripper_config:=/app/configs/my_setup.yaml
+    gripper_config:=/app/configs/baguette.yaml
 
 # Data collection pipeline (only outputs when Gello moves)
 ros2 launch piper piper_unified.launch.py \
     operation_mode:=monitor \
     monitor_source:=gello \
-    gripper_config:=/app/configs/my_setup.yaml \
+    gripper_config:=/app/configs/baguette.yaml \
     monitor_log_format:=positions
 ```
 
@@ -167,6 +182,9 @@ gripper_config:=/path/to/config.yaml  # Robot parameters
 can_port:=can0                         # CAN interface
 auto_enable:=true|false               # Auto-configured per mode
 gripper_exist:=true|false             # Auto-configured per mode
+
+# Teleop-specific
+teleop_input:=gello|keyboard          # Input device for teleop mode
 
 # Monitor-specific
 monitor_source:=lerobot|gello         # Monitor mode sub-type

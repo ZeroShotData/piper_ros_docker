@@ -5,7 +5,7 @@ metadata:
   description: ''
 piper_gripper:
   servo_id: 4
-  device: /dev/ttyACM0
+  device: /dev/ttyACM1
   open_ticks: 1592
   close_ticks: 900
   default_torque: 1000

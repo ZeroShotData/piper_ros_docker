@@ -32,6 +32,7 @@ setup(
             'piper_read_master = piper.piper_read_master_node:main',
             'piper_replay_logger = piper.replay_test_logger:main',
             'keyboard_joint_teleop = piper.keyboard_joint_teleop:main',
+            'single_publisher_guard = piper.single_publisher_guard_node:main',
         ],
     },
 )

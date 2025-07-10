@@ -211,6 +211,25 @@ def generate_launch_description():
 
     can_param_loader = OpaqueFunction(function=_load_can_params)
 
+    # Load namespace from config
+    def _load_namespace(context):
+        import yaml, pathlib
+        cfg_path = context.perform_substitution(LaunchConfiguration('gripper_config'))
+        cfg_file = pathlib.Path(cfg_path)
+        if not cfg_file.is_file():
+            raise RuntimeError(f'Cannot read gripper_config: {cfg_file}')
+
+        data = yaml.safe_load(cfg_file.read_text())
+        
+        # Get namespace from config (default to empty string for no namespace)
+        namespace = data.get('namespace', '')
+        
+        return [
+            SetLaunchConfiguration('namespace', namespace),
+        ]
+
+    namespace_loader = OpaqueFunction(function=_load_namespace)
+
     # CAN activation command – bitrate fixed at 1 Mbit/s, USB address optional via YAML robot.usb_address
     can_activate_cmd = [
         'bash', '/app/can_activate.sh',
@@ -258,6 +277,7 @@ def generate_launch_description():
         package='gripper_config_loader',
         executable='gripper_config_loader',
         name='gripper_config_loader',
+        namespace=LaunchConfiguration('namespace'),
         output='screen',
         parameters=[{
             'gripper_config': LaunchConfiguration('gripper_config'),
@@ -276,6 +296,7 @@ def generate_launch_description():
         package='st3215_driver',
         executable='st3215_servo',
         name='st3215_servo',
+        namespace=LaunchConfiguration('namespace'),
         output='screen',
         parameters=[],  # Relies on parameters published by loader_node
         condition=IfCondition(LaunchConfiguration('gripper_exist'))
@@ -286,6 +307,7 @@ def generate_launch_description():
         package='piper',
         executable='piper_single_ctrl',
         name='piper_ctrl_single_node',
+        namespace=LaunchConfiguration('namespace'),
         output='screen',
         parameters=[{
             'can_port': LaunchConfiguration('can_port'),
@@ -305,9 +327,11 @@ def generate_launch_description():
     )
 
     # Runtime safety guard (always included except monitor mode)
-    pub_guard_proc = ExecuteProcess(
-        cmd=['python3', '-m', 'piper.single_publisher_guard_node'],
+    pub_guard_node = Node(
+        package='piper',
+        executable='single_publisher_guard',
         name='single_pub_guard',
+        namespace=LaunchConfiguration('namespace'),
         output='screen',
         condition=UnlessCondition(
             PythonExpression([
@@ -324,6 +348,7 @@ def generate_launch_description():
         package='piper',
         executable='piper_replay_logger',
         name='replay_logger',
+        namespace=LaunchConfiguration('namespace'),
         output='screen',
         condition=IfCondition(
             PythonExpression([
@@ -344,8 +369,9 @@ def generate_launch_description():
         run_env_path = os.path.join(_gello_dir, 'experiments', 'run_env.py')
         if os.path.isfile(launch_nodes_path) and os.path.isfile(run_env_path):
             # Build commands only when scripts exist
+            piper_gello_dir = _gello_dir # Define piper_gello_dir here
             launch_nodes_cmd = (
-                f'PIPER_DIR={_gello_dir}; '
+                f'PIPER_DIR={piper_gello_dir}; '
                 'exec python3 ${PIPER_DIR}/experiments/launch_nodes.py '
                 '--robot=piper --robot-ip=localhost'
             )
@@ -365,18 +391,21 @@ def generate_launch_description():
                 ),
                 env={
                     'PYTHONUNBUFFERED': '1',
-                    'PYTHONPATH': f'{_gello_dir}:${{PYTHONPATH}}',
-                    'DISABLE_GRIPPER_AUTO_MOVE': 'true',
+                    'PYTHONPATH': f'{piper_gello_dir}:${{PYTHONPATH}}',
+                    'GELLO_CONFIG_FILE': LaunchConfiguration('gripper_config')
                 }
             )
-
+            
+            # Process 2: gello_run_env
+            run_env_cmd = [
+                'python3', 
+                f'{piper_gello_dir}/experiments/run_env.py',
+                '--agent=gello',
+                '--config_file', LaunchConfiguration('gripper_config')
+            ]
+            
             gello_run_env_proc = ExecuteProcess(
-                cmd=[
-                    'python3',
-                    f'{_gello_dir}/experiments/run_env.py',
-                    '--agent=gello',
-                    '--config_file', LaunchConfiguration('gripper_config')
-                ],
+                cmd=run_env_cmd,
                 name='gello_run_env',
                 output='screen',
                 log_cmd=True,
@@ -389,11 +418,11 @@ def generate_launch_description():
                     ])
                 ),
                 env={
-                    'PYTHONUNBUFFERED': '1', 
-                    'PYTHONPATH': f'{_gello_dir}:${{PYTHONPATH}}',
-                    'PIPER_DIR': _gello_dir,
-                    'DISABLE_GRIPPER_AUTO_MOVE': 'true'
-                },
+                    'PYTHONUNBUFFERED': '1',
+                    'PYTHONPATH': f'{piper_gello_dir}:${{PYTHONPATH}}',
+                    'PIPER_DIR': piper_gello_dir,
+                    'GELLO_CONFIG_FILE': LaunchConfiguration('gripper_config')
+                }
             )
 
             gello_entities.extend([gello_launch_nodes_proc, gello_run_env_proc])
@@ -464,6 +493,7 @@ def generate_launch_description():
         monitor_source_arg,
         gello_exist_arg,
         can_param_loader,
+        namespace_loader,
         auto_enable_arg,
         gripper_exist_arg,
         gripper_val_mutiple_arg,
@@ -482,7 +512,7 @@ def generate_launch_description():
         loader_node,          # ALWAYS FIRST - publishes gripper parameters
         servo_node,           # Depends on loader parameters
         piper_node,           # Main controller
-        pub_guard_proc,       # Safety guard
+        pub_guard_node,       # Safety guard
         
         # (d) Conditional components
         replay_logger_node,   # Replay/monitor modes only

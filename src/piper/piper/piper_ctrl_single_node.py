@@ -141,9 +141,10 @@ class PiperRosNode(Node):
         if self.operation_mode != 'monitor':
             # Hardware initialization only for teleop/replay modes
             self.get_logger().info(f"Initializing hardware interface for {self.operation_mode} mode")
-            self.piper = C_PiperInterface(can_name=self.can_port)
+            # Disable SDK joint limits to allow full range of motion
+            self.piper = C_PiperInterface(can_name=self.can_port, start_sdk_joint_limit=False)
             self.piper.ConnectPort()
-            self.get_logger().info("Hardware interface initialized successfully")
+            self.get_logger().info("Hardware interface initialized successfully (SDK joint limits disabled)")
         else:
             # Monitor mode: No hardware connection
             self.piper = None
@@ -191,9 +192,18 @@ class PiperRosNode(Node):
             return
         
         # Teleop/replay modes: Use service as before
-        client = self.create_client(GetParameters, '/gripper_config_loader/get_parameters')
+        namespace = self.get_namespace()
+        loader_service_name = 'gripper_config_loader/get_parameters'
+        if namespace and namespace != '/':
+            # If we have a namespace, prepend it
+            namespace = namespace.rstrip('/')
+            loader_service_name = f'{namespace}/gripper_config_loader/get_parameters'
+        else:
+            loader_service_name = '/gripper_config_loader/get_parameters'
+            
+        client = self.create_client(GetParameters, loader_service_name)
         if not client.wait_for_service(timeout_sec=5.0):
-            self.get_logger().fatal('Loader parameter service unavailable')
+            self.get_logger().fatal(f'Loader parameter service unavailable at {loader_service_name}')
             raise SystemExit
         req = GetParameters.Request(names=['gripper/piper_gripper/open_ticks', 'gripper/piper_gripper/close_ticks'])
         future = client.call_async(req)
@@ -241,11 +251,22 @@ class PiperRosNode(Node):
     
     def _get_critical_topics_for_mode(self):
         """Get list of topics that would conflict if we publish to them"""
+        # Get the fully qualified topic name including namespace
+        namespace = self.get_namespace()
+        joint_ctrl_topic = 'joint_ctrl'
+        
+        # If we have a namespace, prepend it to the topic
+        if namespace and namespace != '/':
+            namespace = namespace.rstrip('/')
+            joint_ctrl_topic = f'{namespace}/joint_ctrl'
+        else:
+            joint_ctrl_topic = '/joint_ctrl'
+            
         if self.operation_mode == 'teleop':
             # Teleop mode with Gello needs exclusive access to joint_ctrl
             # But with keyboard input, the keyboard node publishes to joint_ctrl
             if self.teleop_input == 'gello':
-                return ['/joint_ctrl']
+                return [joint_ctrl_topic]
             else:  # keyboard
                 return []  # No critical topics - keyboard node needs to publish
         elif self.operation_mode == 'replay':
@@ -332,7 +353,7 @@ Cannot start in {self.operation_mode} mode with existing publishers on {topic}.
         
         # Monitor mode logging for joint states
         if self._is_monitor_mode_active():
-            self._monitor_message_callback('/joint_states', self.joint_states)
+            self._monitor_message_callback('joint_states', self.joint_states)
 
     def _publish_simulated_arm_status(self):
         """Publish mock arm status for monitor mode"""
@@ -361,7 +382,7 @@ Cannot start in {self.operation_mode} mode with existing publishers on {topic}.
         
         # Monitor mode logging for arm status
         if self._is_monitor_mode_active():
-            self._monitor_message_callback('/arm_status', arm_status)
+            self._monitor_message_callback('arm_status', arm_status)
 
     def _publish_simulated_end_pose(self):
         """Publish simulated end effector pose for monitor mode"""
@@ -379,7 +400,7 @@ Cannot start in {self.operation_mode} mode with existing publishers on {topic}.
         
         # Monitor mode logging for end pose
         if self._is_monitor_mode_active():
-            self._monitor_message_callback('/end_pose', endpos)
+            self._monitor_message_callback('end_pose', endpos)
 
     def _process_monitor_commands(self):
         """Process commands in monitor mode - logging only"""
@@ -564,10 +585,21 @@ Cannot start in {self.operation_mode} mode with existing publishers on {topic}.
     def _check_for_stale_publishers(self):
         """Check for stale publishers on critical topics and warn if found"""
         try:
+            # Get the fully qualified topic name including namespace
+            namespace = self.get_namespace()
+            joint_ctrl_topic = 'joint_ctrl'
+            
+            # If we have a namespace, prepend it to the topic
+            if namespace and namespace != '/':
+                namespace = namespace.rstrip('/')
+                joint_ctrl_topic = f'{namespace}/joint_ctrl'
+            else:
+                joint_ctrl_topic = '/joint_ctrl'
+                
             # Check if there are existing publishers on joint_ctrl
-            publishers = self.get_publishers_info_by_topic('/joint_ctrl')
+            publishers = self.get_publishers_info_by_topic(joint_ctrl_topic)
             if publishers:
-                self.get_logger().warn(f"Found {len(publishers)} existing publishers on /joint_ctrl")
+                self.get_logger().warn(f"Found {len(publishers)} existing publishers on {joint_ctrl_topic}")
                 for pub in publishers:
                     self.get_logger().warn(f"  - {pub.node_name} (namespace: {pub.node_namespace})")
                 self.get_logger().warn("This may cause conflicts with LeRobot. Consider restarting if issues occur.")
@@ -580,20 +612,23 @@ Cannot start in {self.operation_mode} mode with existing publishers on {topic}.
         self._message_stats = {}
         self._monitor_start_time = time.time()
         
-        # Default monitored topics if none specified
+        # Get namespace for topics
+        namespace = self.get_namespace()
+        
+        # Default monitored topics if none specified (use relative topics)
         if not self.monitor_topics:
             self.monitor_topics = [
-                '/joint_ctrl',
-                '/joint_states',
-                '/arm_status',
-                '/end_pose'
+                'joint_ctrl',
+                'joint_states',
+                'arm_status',
+                'end_pose'
             ]
         
         # Create monitoring subscriptions for joint control commands
         self._monitor_joint_sub = self.create_subscription(
             JointState, 
             'joint_ctrl', 
-            lambda msg: self._monitor_message_callback('/joint_ctrl', msg),
+            lambda msg: self._monitor_message_callback('joint_ctrl', msg),
             qos_profile_sensor_data
         )
         
@@ -622,6 +657,7 @@ Cannot start in {self.operation_mode} mode with existing publishers on {topic}.
         self.get_logger().info(f"  Format: {self.monitor_log_format}")
         self.get_logger().info(f"  Rate interval: {self.monitor_rate_interval}s")
         self.get_logger().info(f"  Monitored topics: {self.monitor_topics}")
+        self.get_logger().info(f"  Namespace: {namespace if namespace != '/' else 'none'}")
         
         # Log initial monitor mode status (skip for positions format)
         if self.monitor_log_format != 'positions':
@@ -629,6 +665,7 @@ Cannot start in {self.operation_mode} mode with existing publishers on {topic}.
             print(f"Source: {self.monitor_source}")
             print(f"Format: {self.monitor_log_format}")
             print(f"Topics: {self.monitor_topics}")
+            print(f"Namespace: {namespace if namespace != '/' else 'none'}")
             print(f"Statistics interval: {self.monitor_rate_interval}s")
             print("All robot control commands are blocked for safety.")
             print("=" * 30)
@@ -789,7 +826,7 @@ Cannot start in {self.operation_mode} mode with existing publishers on {topic}.
     def _log_positions_format(self, topic_name, msg, stats):
         """Log message in positions-only format - simplest possible output"""
         # Only log joint commands, not simulated joint states
-        if topic_name != '/joint_ctrl':
+        if topic_name != 'joint_ctrl':
             return  # Only output actual commands, not simulated states
             
         # Extract joint positions (6 main joints only)
@@ -891,8 +928,8 @@ Cannot start in {self.operation_mode} mode with existing publishers on {topic}.
         """Estimate number of connected clients based on message activity"""
         # Simplified estimation - in a real implementation, you'd query rosbridge
         # For now, assume 1 client if we're receiving messages regularly
-        if '/joint_ctrl' in self._message_stats:
-            stats = self._message_stats['/joint_ctrl']
+        if 'joint_ctrl' in self._message_stats:
+            stats = self._message_stats['joint_ctrl']
             if stats['rates'] and len(stats['rates']) > 0:
                 recent_rate = sum(stats['rates'][-3:]) / len(stats['rates'][-3:])
                 return 1 if recent_rate > 0.1 else 0
@@ -1040,7 +1077,7 @@ Cannot start in {self.operation_mode} mode with existing publishers on {topic}.
         
         # Monitor mode logging for arm status
         if self._is_monitor_mode_active():
-            self._monitor_message_callback('/arm_status', arm_status)
+            self._monitor_message_callback('arm_status', arm_status)
 
     def PublishArmJointAndGripper(self):
         # Hardware validation for safety
@@ -1085,7 +1122,7 @@ Cannot start in {self.operation_mode} mode with existing publishers on {topic}.
         
         # Monitor mode logging for joint states
         if self._is_monitor_mode_active():
-            self._monitor_message_callback('/joint_states', self.joint_states)
+            self._monitor_message_callback('joint_states', self.joint_states)
 
 
     def PublishArmEndPose(self):
@@ -1114,7 +1151,7 @@ Cannot start in {self.operation_mode} mode with existing publishers on {topic}.
         
         # Monitor mode logging for end pose
         if self._is_monitor_mode_active():
-            self._monitor_message_callback('/end_pose', endpos)
+            self._monitor_message_callback('end_pose', endpos)
 
     def pos_callback(self, pos_data):
         """Callback function for subscribing to the end effector pose
@@ -1168,7 +1205,7 @@ Cannot start in {self.operation_mode} mode with existing publishers on {topic}.
         """
         # Monitor mode logging (lightweight)
         if self._is_monitor_mode_active():
-            self._monitor_message_callback('/joint_ctrl', joint_data)
+            self._monitor_message_callback('joint_ctrl', joint_data)
         
         with self._joint_cmd_lock:
             # Only keep reference to the newest message; older ones will be GC-ed

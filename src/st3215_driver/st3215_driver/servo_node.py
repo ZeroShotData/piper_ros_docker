@@ -43,9 +43,18 @@ class ST3215Driver(Node):
         servo_id = None
 
         # Always fetch from loader node
-        client = self.create_client(GetParameters, '/gripper_config_loader/get_parameters')
+        namespace = self.get_namespace()
+        loader_service_name = 'gripper_config_loader/get_parameters'
+        if namespace and namespace != '/':
+            # If we have a namespace, prepend it
+            namespace = namespace.rstrip('/')
+            loader_service_name = f'{namespace}/gripper_config_loader/get_parameters'
+        else:
+            loader_service_name = '/gripper_config_loader/get_parameters'
+            
+        client = self.create_client(GetParameters, loader_service_name)
         if not client.wait_for_service(timeout_sec=5.0):
-            self.get_logger().fatal('Loader parameter service not available')
+            self.get_logger().fatal(f'Loader parameter service not available at {loader_service_name}')
             raise SystemExit
         req = GetParameters.Request(names=['gripper/piper_gripper/device', 'gripper/piper_gripper/servo_id'])
         future = client.call_async(req)

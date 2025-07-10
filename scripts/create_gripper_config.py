@@ -123,7 +123,7 @@ def main():
     
     # Gello options  
     parser.add_argument('--gello-port', 
-                       default='/dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTA7NMKV-if00-port0',
+                       default='/dev/ttyUSB1',
                        help='Gello serial port (symlink will be auto-created if missing)')
     parser.add_argument('--gello-id', type=int, default=7,
                        help='Gello servo ID')

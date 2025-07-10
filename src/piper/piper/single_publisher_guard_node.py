@@ -22,10 +22,20 @@ class SinglePublisherGuard(Node):
     # Callbacks
     # ------------------------------------------------------------------
     def _on_timer(self) -> None:
-        publishers = self.get_publishers_info_by_topic("/joint_ctrl")
+        # Get the fully qualified topic name including namespace
+        namespace = self.get_namespace()
+        topic_name = "/joint_ctrl"
+        
+        # If we have a namespace, prepend it to the topic
+        if namespace and namespace != '/':
+            # Remove trailing slash from namespace if present
+            namespace = namespace.rstrip('/')
+            topic_name = f"{namespace}/joint_ctrl"
+        
+        publishers = self.get_publishers_info_by_topic(topic_name)
         if len(publishers) > 1:
             self.get_logger().error(
-                "Multiple publishers detected on /joint_ctrl; shutting down."
+                f"Multiple publishers detected on {topic_name}; shutting down."
             )
             # Shutdown the ROS graph first so that other nodes are notified
             rclpy.shutdown()
