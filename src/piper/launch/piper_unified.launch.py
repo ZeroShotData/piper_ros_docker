@@ -22,6 +22,7 @@ from launch.event_handlers import OnProcessExit
 import os
 import yaml
 import pathlib
+import tempfile
 
 
 def get_mode_defaults(mode, overrides=None):
@@ -179,6 +180,12 @@ def generate_launch_description():
         description='Monitor mode statistics reporting interval in seconds'
     )
 
+    is_bimanual_arg = DeclareLaunchArgument(
+        'is_bimanual',
+        default_value='false',
+        description='Whether bimanual mode is enabled (detected from YAML).'
+    )
+
                                                                    # Derive CAN interface name and USB address from YAML (no hard-coding)
     def _load_can_params(context):
         import yaml, pathlib
@@ -188,6 +195,16 @@ def generate_launch_description():
             raise RuntimeError(f'Cannot read gripper_config: {cfg_file}')
 
         data = yaml.safe_load(cfg_file.read_text())
+
+        # If this is a bimanual config, we don't need single-arm CAN params here.
+        if data.get('metadata', {}).get('is_bimanual', False):
+            # Flag launch system and provide dummy CAN values to satisfy downstream substitutions.
+            return [
+                SetLaunchConfiguration('is_bimanual', 'true'),
+                SetLaunchConfiguration('can_port', 'can_dummy'),
+                SetLaunchConfiguration('can_usb_addr', ''),
+            ]
+
         robot_cfg = data.get('robot', {})
 
         # Which side (left/right) is this config describing?
@@ -242,9 +259,10 @@ def generate_launch_description():
         cmd=can_activate_cmd,
         name='activate_can',
         output='screen',
-        condition=UnlessCondition(
+        condition=IfCondition(
             PythonExpression([
-                "'", LaunchConfiguration('operation_mode'), "' == 'monitor'"
+                "'", LaunchConfiguration('operation_mode'), "' != 'monitor' and '",
+                LaunchConfiguration('is_bimanual'), "' == 'false'"
             ])
         )
     )
@@ -262,9 +280,10 @@ def generate_launch_description():
                 'echo "Created $TARGET -> /dev/ttyUSB0"; }'
             )
         ],
-        condition=UnlessCondition(
+        condition=IfCondition(
             PythonExpression([
-                "'", LaunchConfiguration('operation_mode'), "' == 'monitor'"
+                "'", LaunchConfiguration('operation_mode'), "' != 'monitor' and '",
+                LaunchConfiguration('is_bimanual'), "' == 'false'"
             ])
         )
     )
@@ -283,10 +302,11 @@ def generate_launch_description():
             'gripper_config': LaunchConfiguration('gripper_config'),
             'gello_exist': LaunchConfiguration('gello_exist')
         }],
-        condition=UnlessCondition(
+        condition=IfCondition(
             PythonExpression([
-                "'", LaunchConfiguration('operation_mode'), "' == 'monitor' and '",
-                LaunchConfiguration('monitor_source'), "' == 'lerobot'"
+                "'", LaunchConfiguration('is_bimanual'), "' == 'false' and not ('",
+                LaunchConfiguration('operation_mode'), "' == 'monitor' and '",
+                LaunchConfiguration('monitor_source'), "' == 'lerobot')"
             ])
         )
     )
@@ -299,7 +319,12 @@ def generate_launch_description():
         namespace=LaunchConfiguration('namespace'),
         output='screen',
         parameters=[],  # Relies on parameters published by loader_node
-        condition=IfCondition(LaunchConfiguration('gripper_exist'))
+        condition=IfCondition(
+            PythonExpression([
+                "'", LaunchConfiguration('gripper_exist'), "' == 'true' and '",
+                LaunchConfiguration('is_bimanual'), "' == 'false'"
+            ])
+        )
     )
 
     # Piper controller node (unified parameters for all modes)
@@ -324,6 +349,11 @@ def generate_launch_description():
             'monitor_source': LaunchConfiguration('monitor_source'),
         }],
         # No remappings needed; controller publishes standardized topic names
+        condition=IfCondition(
+            PythonExpression([
+                "'", LaunchConfiguration('is_bimanual'), "' == 'false'"
+            ])
+        )
     )
 
     # Runtime safety guard (always included except monitor mode)
@@ -333,9 +363,10 @@ def generate_launch_description():
         name='single_pub_guard',
         namespace=LaunchConfiguration('namespace'),
         output='screen',
-        condition=UnlessCondition(
+        condition=IfCondition(
             PythonExpression([
-                "'", LaunchConfiguration('operation_mode'), "' == 'monitor'"
+                "'", LaunchConfiguration('operation_mode'), "' != 'monitor' and '",
+                LaunchConfiguration('is_bimanual'), "' == 'false'"
             ])
         )
     )
@@ -396,25 +427,56 @@ def generate_launch_description():
                 }
             )
             
-            # Process 2: gello_run_env
-            run_env_cmd = [
-                'python3', 
-                f'{piper_gello_dir}/experiments/run_env.py',
-                '--agent=gello',
-                '--config_file', LaunchConfiguration('gripper_config')
-            ]
-            
-            gello_run_env_proc = ExecuteProcess(
-                cmd=run_env_cmd,
+            # Process 2: gello_run_env - create separate processes for single-arm and bimanual
+            # Single-arm version (without --bimanual flag)
+            gello_run_env_single = ExecuteProcess(
+                cmd=[
+                    'python3', 
+                    f'{piper_gello_dir}/experiments/run_env.py',
+                    '--agent=gello',
+                    '--config_file', LaunchConfiguration('gripper_config')
+                ],
                 name='gello_run_env',
                 output='screen',
                 log_cmd=True,
                 condition=IfCondition(
                     PythonExpression([
                         "('", LaunchConfiguration('operation_mode'), "' == 'teleop' and '",
-                        LaunchConfiguration('teleop_input'), "' == 'gello') or ('",
+                        LaunchConfiguration('teleop_input'), "' == 'gello' and '",
+                        LaunchConfiguration('is_bimanual'), "' == 'false') or ('",
                         LaunchConfiguration('operation_mode'), "' == 'monitor' and '", 
-                        LaunchConfiguration('monitor_source'), "' == 'gello')"
+                        LaunchConfiguration('monitor_source'), "' == 'gello' and '",
+                        LaunchConfiguration('is_bimanual'), "' == 'false')"
+                    ])
+                ),
+                env={
+                    'PYTHONUNBUFFERED': '1',
+                    'PYTHONPATH': f'{piper_gello_dir}:${{PYTHONPATH}}',
+                    'PIPER_DIR': piper_gello_dir,
+                    'GELLO_CONFIG_FILE': LaunchConfiguration('gripper_config')
+                }
+            )
+            
+            # Bimanual version (with --bimanual flag)
+            gello_run_env_bimanual = ExecuteProcess(
+                cmd=[
+                    'python3', 
+                    f'{piper_gello_dir}/experiments/run_env.py',
+                    '--agent=gello',
+                    '--config_file', LaunchConfiguration('gripper_config'),
+                    '--bimanual'
+                ],
+                name='gello_run_env',
+                output='screen',
+                log_cmd=True,
+                condition=IfCondition(
+                    PythonExpression([
+                        "('", LaunchConfiguration('operation_mode'), "' == 'teleop' and '",
+                        LaunchConfiguration('teleop_input'), "' == 'gello' and '",
+                        LaunchConfiguration('is_bimanual'), "' == 'true') or ('",
+                        LaunchConfiguration('operation_mode'), "' == 'monitor' and '", 
+                        LaunchConfiguration('monitor_source'), "' == 'gello' and '",
+                        LaunchConfiguration('is_bimanual'), "' == 'true')"
                     ])
                 ),
                 env={
@@ -425,12 +487,12 @@ def generate_launch_description():
                 }
             )
 
-            gello_entities.extend([gello_launch_nodes_proc, gello_run_env_proc])
+            gello_entities.extend([gello_launch_nodes_proc, gello_run_env_single, gello_run_env_bimanual])
             
-            # Create OnProcessExit handler for gello_run_env process (safety mechanism)
-            gello_exit_handler = RegisterEventHandler(
+            # Create OnProcessExit handlers for both gello_run_env processes
+            gello_exit_handler_single = RegisterEventHandler(
                 OnProcessExit(
-                    target_action=gello_run_env_proc,
+                    target_action=gello_run_env_single,
                     on_exit=[
                         Shutdown(reason='Gello process exited - shutting down for safety')
                     ]
@@ -438,9 +500,30 @@ def generate_launch_description():
                 condition=IfCondition(
                     PythonExpression([
                         "('", LaunchConfiguration('operation_mode'), "' == 'teleop' and '",
-                        LaunchConfiguration('teleop_input'), "' == 'gello') or ('",
+                        LaunchConfiguration('teleop_input'), "' == 'gello' and '",
+                        LaunchConfiguration('is_bimanual'), "' == 'false') or ('",
                         LaunchConfiguration('operation_mode'), "' == 'monitor' and '", 
-                        LaunchConfiguration('monitor_source'), "' == 'gello')"
+                        LaunchConfiguration('monitor_source'), "' == 'gello' and '",
+                        LaunchConfiguration('is_bimanual'), "' == 'false')"
+                    ])
+                )
+            )
+            
+            gello_exit_handler_bimanual = RegisterEventHandler(
+                OnProcessExit(
+                    target_action=gello_run_env_bimanual,
+                    on_exit=[
+                        Shutdown(reason='Gello process exited - shutting down for safety')
+                    ]
+                ),
+                condition=IfCondition(
+                    PythonExpression([
+                        "('", LaunchConfiguration('operation_mode'), "' == 'teleop' and '",
+                        LaunchConfiguration('teleop_input'), "' == 'gello' and '",
+                        LaunchConfiguration('is_bimanual'), "' == 'true') or ('",
+                        LaunchConfiguration('operation_mode'), "' == 'monitor' and '", 
+                        LaunchConfiguration('monitor_source'), "' == 'gello' and '",
+                        LaunchConfiguration('is_bimanual'), "' == 'true')"
                     ])
                 )
             )
@@ -458,8 +541,10 @@ def generate_launch_description():
             )
         ]
         # Also need to add the exit handler (not delayed)
-        if 'gello_exit_handler' in locals():
-            gello_exit_handlers = [gello_exit_handler]
+        if 'gello_exit_handler_single' in locals():
+            gello_exit_handlers.append(gello_exit_handler_single)
+        if 'gello_exit_handler_bimanual' in locals():
+            gello_exit_handlers.append(gello_exit_handler_bimanual)
 
     # -----------------------
     # Keyboard teleop component (teleop mode, keyboard input)
@@ -503,6 +588,7 @@ def generate_launch_description():
         gripper_config_arg,
         monitor_log_format_arg,
         monitor_rate_interval_arg,
+        is_bimanual_arg,
         
         # (b) Hardware processes (conditional)
         can_activate_proc,
@@ -519,8 +605,162 @@ def generate_launch_description():
         keyboard_instruction_action, # Print instructions for keyboard mode
         
         # (e) Gello helpers (teleop mode only, delayed startup)
-        *delayed_gello_entities,
+        ] + delayed_gello_entities + gello_exit_handlers + [
         
-        # (f) Safety handlers (teleop mode only)
-        *gello_exit_handlers,
+        # (f) Bimanual setup
+        bimanual_setup,
     ])
+
+def _bimanual_setup(context):
+    cfg_path = context.perform_substitution(LaunchConfiguration('gripper_config'))
+    cfg_file = pathlib.Path(cfg_path)
+    if not cfg_file.is_file():
+        raise RuntimeError(f'Cannot read gripper_config: {cfg_file}')
+
+    data = yaml.safe_load(cfg_file.read_text())
+    if not data.get('metadata', {}).get('is_bimanual', False):
+        return []
+
+    # Extract left config
+    left_config = {
+        'metadata': data['metadata'],
+        'namespace': data['robot']['arms']['left']['namespace'],
+        'piper_gripper': data['piper_gripper']['left'],
+        'robot': data['robot']['arms']['left'],
+        'gello': data['gello']['left']
+    }
+    with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.yaml') as left_tmp:
+        yaml.dump(left_config, left_tmp)
+        left_path = left_tmp.name
+
+    # Extract right config
+    right_config = {
+        'metadata': data['metadata'],
+        'namespace': data['robot']['arms']['right']['namespace'],
+        'piper_gripper': data['piper_gripper']['right'],
+        'robot': data['robot']['arms']['right'],
+        'gello': data['gello']['right']
+    }
+    with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.yaml') as right_tmp:
+        yaml.dump(right_config, right_tmp)
+        right_path = right_tmp.name
+
+    # Left arm nodes
+    left_namespace = left_config['namespace']
+    left_can_port = f"can_{left_config['robot']['arm_side']}"
+    left_usb_addr = left_config['robot']['usb_address']
+    left_can_activate = ExecuteProcess(
+        cmd=['bash', '/app/can_activate.sh', left_can_port, '1000000', left_usb_addr],
+        name='activate_can_left',
+        output='screen',
+        condition=UnlessCondition(PythonExpression(["'", LaunchConfiguration('operation_mode'), "' == 'monitor'"]))
+    )
+    left_loader = Node(
+        package='gripper_config_loader',
+        executable='gripper_config_loader',
+        name='gripper_config_loader',
+        namespace=left_namespace,
+        output='screen',
+        parameters=[{'gripper_config': left_path, 'gello_exist': LaunchConfiguration('gello_exist')}],
+        condition=UnlessCondition(PythonExpression(["'", LaunchConfiguration('operation_mode'), "' == 'monitor' and '", LaunchConfiguration('monitor_source'), "' == 'lerobot'"]))
+    )
+    left_servo = Node(
+        package='st3215_driver',
+        executable='st3215_servo',
+        name='st3215_servo',
+        namespace=left_namespace,
+        output='screen',
+        parameters=[],
+        condition=IfCondition(LaunchConfiguration('gripper_exist'))
+    )
+    left_piper = Node(
+        package='piper',
+        executable='piper_single_ctrl',
+        name='piper_ctrl_single_node',
+        namespace=left_namespace,
+        output='screen',
+        parameters=[{
+            'can_port': left_can_port,
+            'auto_enable': LaunchConfiguration('auto_enable'),
+            'gripper_val_mutiple': LaunchConfiguration('gripper_val_mutiple'),
+            'gripper_exist': LaunchConfiguration('gripper_exist'),
+            'disable_gripper_auto_move': LaunchConfiguration('disable_gripper_auto_move'),
+            'rviz_ctrl_flag': LaunchConfiguration('rviz_ctrl_flag'),
+            'use_rosbridge': True,  # Enable on left
+            'operation_mode': LaunchConfiguration('operation_mode'),
+            'teleop_input': LaunchConfiguration('teleop_input'),
+            'monitor_log_format': LaunchConfiguration('monitor_log_format'),
+            'monitor_rate_interval': LaunchConfiguration('monitor_rate_interval'),
+            'monitor_source': LaunchConfiguration('monitor_source'),
+        }]
+    )
+    left_guard = Node(
+        package='piper',
+        executable='single_publisher_guard',
+        name='single_pub_guard',
+        namespace=left_namespace,
+        output='screen',
+        condition=UnlessCondition(PythonExpression(["'", LaunchConfiguration('operation_mode'), "' == 'monitor'"]))
+    )
+
+    # Right arm nodes
+    right_namespace = right_config['namespace']
+    right_can_port = f"can_{right_config['robot']['arm_side']}"
+    right_usb_addr = right_config['robot']['usb_address']
+    right_can_activate = ExecuteProcess(
+        cmd=['bash', '/app/can_activate.sh', right_can_port, '1000000', right_usb_addr],
+        name='activate_can_right',
+        output='screen',
+        condition=UnlessCondition(PythonExpression(["'", LaunchConfiguration('operation_mode'), "' == 'monitor'"]))
+    )
+    right_loader = Node(
+        package='gripper_config_loader',
+        executable='gripper_config_loader',
+        name='gripper_config_loader',
+        namespace=right_namespace,
+        output='screen',
+        parameters=[{'gripper_config': right_path, 'gello_exist': LaunchConfiguration('gello_exist')}],
+        condition=UnlessCondition(PythonExpression(["'", LaunchConfiguration('operation_mode'), "' == 'monitor' and '", LaunchConfiguration('monitor_source'), "' == 'lerobot'"]))
+    )
+    right_servo = Node(
+        package='st3215_driver',
+        executable='st3215_servo',
+        name='st3215_servo',
+        namespace=right_namespace,
+        output='screen',
+        parameters=[],
+        condition=IfCondition(LaunchConfiguration('gripper_exist'))
+    )
+    right_piper = Node(
+        package='piper',
+        executable='piper_single_ctrl',
+        name='piper_ctrl_single_node',
+        namespace=right_namespace,
+        output='screen',
+        parameters=[{
+            'can_port': right_can_port,
+            'auto_enable': LaunchConfiguration('auto_enable'),
+            'gripper_val_mutiple': LaunchConfiguration('gripper_val_mutiple'),
+            'gripper_exist': LaunchConfiguration('gripper_exist'),
+            'disable_gripper_auto_move': LaunchConfiguration('disable_gripper_auto_move'),
+            'rviz_ctrl_flag': LaunchConfiguration('rviz_ctrl_flag'),
+            'use_rosbridge': False,  # Disable on right
+            'operation_mode': LaunchConfiguration('operation_mode'),
+            'teleop_input': LaunchConfiguration('teleop_input'),
+            'monitor_log_format': LaunchConfiguration('monitor_log_format'),
+            'monitor_rate_interval': LaunchConfiguration('monitor_rate_interval'),
+            'monitor_source': LaunchConfiguration('monitor_source'),
+        }]
+    )
+    right_guard = Node(
+        package='piper',
+        executable='single_publisher_guard',
+        name='single_pub_guard',
+        namespace=right_namespace,
+        output='screen',
+        condition=UnlessCondition(PythonExpression(["'", LaunchConfiguration('operation_mode'), "' == 'monitor'"]))
+    )
+
+    return [left_can_activate, right_can_activate, left_loader, right_loader, left_servo, right_servo, left_piper, right_piper, left_guard, right_guard]
+
+bimanual_setup = OpaqueFunction(function=_bimanual_setup)

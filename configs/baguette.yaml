@@ -3,6 +3,7 @@ metadata:
   created_date: '2025-06-24T03:11:23.446004'
   robot_serial: PIPER_001
   description: ''
+namespace: baguette  # Namespace prefix for all ROS topics
 piper_gripper:
   servo_id: 4
   device: /dev/ttyACM1

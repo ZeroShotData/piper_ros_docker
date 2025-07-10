@@ -1,0 +1,83 @@
+metadata:
+  config_name: bimanual
+  created_date: '2025-06-24T03:11:23.446004'
+  robot_serial: PIPER_001
+  description: 'Bimanual configuration for left (choupette) and right (baguette) arms'
+  is_bimanual: true
+
+# No global namespace for bimanual - use per-arm namespaces
+namespace: ''
+
+# Per-arm piper_gripper configurations
+piper_gripper:
+  left:
+    servo_id: 1
+    device: /dev/ttyACM0
+    open_ticks: 1592
+    close_ticks: 900
+    default_torque: 1000
+  right:
+    servo_id: 4
+    device: /dev/ttyACM1
+    open_ticks: 1592
+    close_ticks: 900
+    default_torque: 1000
+
+# Per-arm robot configurations with namespaced topics
+robot:
+  arms:
+    left:
+      namespace: choupette
+      arm_side: left
+      usb_address: 1-3.4.4.1.1:1.0
+      joint_topic: /joint_ctrl_single
+      joint_state_topic: /joint_states_single
+      end_pose_topic: /end_pose
+      arm_status_topic: /arm_status
+      enable_topic: /enable_flag
+      servo_topic: /servo/command_raw
+    right:
+      namespace: baguette
+      arm_side: right
+      usb_address: 1-3.4.4.1.2:1.0
+      joint_topic: /joint_ctrl_single
+      joint_state_topic: /joint_states_single
+      end_pose_topic: /end_pose
+      arm_status_topic: /arm_status
+      enable_topic: /enable_flag
+      servo_topic: /servo/command_raw
+
+# Per-arm gello configurations
+gello:
+  left:
+    device: /dev/ttyUSB1
+    gripper_servo_id: 7
+    gripper_open_degrees: 176.3
+    gripper_close_degrees: 150.3
+    gripper_effort_range: [0.5, 3.0]
+    joint_ids: [1, 2, 3, 4, 5, 6]
+    joint_offsets: [4.715, 6.229, 3.163, 3.178, 3.227, 0.017]
+    joint_signs: [1, -1, -1, 1, -1, 1]
+    joint_raw_ranges:
+      - [2.056, 6.855]
+      - [3.128, 6.245]
+      - [3.155, 5.890]
+      - [1.307, 4.995]
+      - [1.243, 4.913]
+      - [-5.593, 10.009]
+  right:
+    device: /dev/ttyUSB0
+    gripper_servo_id: 7
+    gripper_open_degrees: 184.18359375000006
+    gripper_close_degrees: 148.18359375
+    gripper_effort_range: [0.5, 3.0]
+    joint_ids: [1, 2, 3, 4, 5, 6]
+    joint_offsets: [3.174, 7.869, 3.091, 4.689, 0.017, 1.129]
+    joint_signs: [1, -1, -1, 1, -1, 1]
+    joint_raw_ranges:
+      - [2.056, 6.855]
+      - [3.128, 6.245]
+      - [3.155, 5.890]
+      - [1.307, 4.995]
+      - [1.243, 4.913]
+      - [-5.593, 10.009] 
