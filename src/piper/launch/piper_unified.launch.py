@@ -23,6 +23,40 @@ import os
 import yaml
 import pathlib
 import tempfile
+import subprocess
+import time
+
+
+def cleanup_duplicate_processes(context):
+    """Clean up duplicate processes from previous runs at launch startup."""
+    print("Cleaning up duplicate processes...")
+    
+    try:
+        # Kill older piper_ctrl_single_node instances (keep newest)
+        result = subprocess.run(
+            "ps aux | grep 'piper_ctrl_single_node' | grep -v grep | sort -k2 -n | head -n -1 | awk '{print $2}'",
+            shell=True, capture_output=True, text=True
+        )
+        old_pids = result.stdout.strip()
+        if old_pids:
+            subprocess.run(f"kill -TERM {old_pids}", shell=True, capture_output=True)
+            time.sleep(0.5)
+        
+        # Kill ALL gripper_config_loader instances
+        subprocess.run("pkill -f 'gripper_config_loader'", shell=True, capture_output=True)
+        
+        # Kill ALL rosapi nodes
+        subprocess.run("pkill -f 'rosapi_node'", shell=True, capture_output=True)
+        
+        # Kill rosbridge to force clean restart
+        subprocess.run("pkill -f 'rosbridge_websocket'", shell=True, capture_output=True)
+        
+        time.sleep(1.0)  # Give processes time to terminate
+        
+    except Exception:
+        pass  # Silently ignore any errors
+    
+    return []  # Return empty list as required by OpaqueFunction
 
 
 def get_mode_defaults(mode, overrides=None):
@@ -184,6 +218,12 @@ def generate_launch_description():
         'is_bimanual',
         default_value='false',
         description='Whether bimanual mode is enabled (detected from YAML).'
+    )
+    
+    control_frequency_arg = DeclareLaunchArgument(
+        'control_frequency',
+        default_value='40.0',
+        description='Control loop frequency in Hz for all components (default: 40Hz).'
     )
 
                                                                    # Derive CAN interface name and USB address from YAML (no hard-coding)
@@ -423,7 +463,8 @@ def generate_launch_description():
                 env={
                     'PYTHONUNBUFFERED': '1',
                     'PYTHONPATH': f'{piper_gello_dir}:${{PYTHONPATH}}',
-                    'GELLO_CONFIG_FILE': LaunchConfiguration('gripper_config')
+                    'GELLO_CONFIG_FILE': LaunchConfiguration('gripper_config'),
+                    'CONTROL_FREQUENCY': LaunchConfiguration('control_frequency')
                 }
             )
             
@@ -453,7 +494,8 @@ def generate_launch_description():
                     'PYTHONUNBUFFERED': '1',
                     'PYTHONPATH': f'{piper_gello_dir}:${{PYTHONPATH}}',
                     'PIPER_DIR': piper_gello_dir,
-                    'GELLO_CONFIG_FILE': LaunchConfiguration('gripper_config')
+                    'GELLO_CONFIG_FILE': LaunchConfiguration('gripper_config'),
+                    'CONTROL_FREQUENCY': LaunchConfiguration('control_frequency')
                 }
             )
             
@@ -541,6 +583,15 @@ def generate_launch_description():
             )
         ]
         # Also need to add the exit handler (not delayed)
+        if 'gello_launch_nodes_proc' in locals():
+            gello_exit_handlers.append(RegisterEventHandler(
+                OnProcessExit(
+                    target_action=gello_launch_nodes_proc,
+                    on_exit=[
+                        Shutdown(reason='Gello launch nodes process exited - shutting down for safety')
+                    ]
+                )
+            ))
         if 'gello_exit_handler_single' in locals():
             gello_exit_handlers.append(gello_exit_handler_single)
         if 'gello_exit_handler_bimanual' in locals():
@@ -589,6 +640,10 @@ def generate_launch_description():
         monitor_log_format_arg,
         monitor_rate_interval_arg,
         is_bimanual_arg,
+        control_frequency_arg,
+        
+        # (a.5) Clean up duplicate processes from previous runs
+        OpaqueFunction(function=cleanup_duplicate_processes),
         
         # (b) Hardware processes (conditional)
         can_activate_proc,

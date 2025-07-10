@@ -9,6 +9,8 @@ import time
 import threading
 import argparse
 import math
+import signal
+import sys
 from piper_sdk import *
 from piper_sdk import C_PiperInterface
 from piper_msgs.msg import PiperStatusMsg, PosCmd
@@ -44,6 +46,12 @@ class PiperRosNode(Node):
                 ``/arm2/joint_ctrl`` …).
         """
         super().__init__(node_name, namespace=namespace)
+        
+        # Setup signal handlers for clean shutdown
+        self._shutdown_flag = False
+        signal.signal(signal.SIGINT, self._signal_handler)
+        signal.signal(signal.SIGTERM, self._signal_handler)
+
         # ROS parameters
         self.declare_parameter('can_port', 'can0')
         self.declare_parameter('auto_enable', False)
@@ -946,9 +954,14 @@ Cannot start in {self.operation_mode} mode with existing publishers on {topic}.
             'connection_uptime': round(uptime, 1)
         }
 
+    def _signal_handler(self, signum, frame):
+        """Handle shutdown signals gracefully."""
+        self.get_logger().info(f"Received signal {signum}, initiating clean shutdown...")
+        self._shutdown_flag = True
+        
     def GetEnableFlag(self):
         # Debug: Print enable status when checked
-        self.get_logger().debug(f"Enable flag checked, status: {self.__enable_flag}")
+        # self.get_logger().debug(f"Enable flag check: {self.__enable_flag}")
         return self.__enable_flag
 
     def publish_thread(self):
@@ -956,7 +969,7 @@ Cannot start in {self.operation_mode} mode with existing publishers on {topic}.
         if self.operation_mode == 'monitor':
             rate = self.create_rate(5)  # 5 Hz for monitor mode
         else:
-            rate = self.create_rate(100)  # 100 Hz for teleop/replay
+            rate = self.create_rate(40)  # 40 Hz for teleop/replay (reduced from 100Hz)
         self.get_logger().info(f"Starting publish loop for {self.operation_mode} mode")
         
         # Move enable check here - run ONCE at startup like old code
@@ -993,7 +1006,7 @@ Cannot start in {self.operation_mode} mode with existing publishers on {topic}.
                 print("Automatic enable timeout, exiting program")
                 exit(0)
         
-        while rclpy.ok():
+        while rclpy.ok() and not self._shutdown_flag:
             if self.operation_mode == 'monitor':
                 self._publish_thread_monitor_mode()
             elif self.operation_mode in ['teleop', 'replay']:
@@ -1424,8 +1437,19 @@ Cannot start in {self.operation_mode} mode with existing publishers on {topic}.
         return resp
 
     def destroy_node(self):
+        """Clean shutdown of all resources."""
+        self.get_logger().info("Starting clean shutdown...")
+        
+        # Set shutdown flag to stop threads
+        self._shutdown_flag = True
+        
+        # Stop the publish thread if it's running
+        if hasattr(self, 'publish_thread_handle') and self.publish_thread_handle is not None:
+            self.get_logger().info("Waiting for publish thread to stop...")
+            self.publish_thread_handle.join(timeout=2.0)
+        
         # Terminate rosbridge server if it was started
-        if self.rosbridge_process is not None:
+        if hasattr(self, 'rosbridge_process') and self.rosbridge_process is not None:
             self.get_logger().info("Terminating rosbridge server...")
             self.rosbridge_process.terminate()
             try:
@@ -1438,14 +1462,28 @@ Cannot start in {self.operation_mode} mode with existing publishers on {topic}.
         # Always kill ALL rosbridge processes to ensure clean state for next run
         self.get_logger().info("Final cleanup of all rosbridge processes...")
         try:
+            # Kill rosbridge processes
             subprocess.run(["pkill", "-f", "rosbridge_websocket"], capture_output=True)
-            subprocess.run(["pkill", "-f", "rosbridge_server"], capture_output=True) 
+            subprocess.run(["pkill", "-f", "rosbridge_server"], capture_output=True)
+            subprocess.run(["pkill", "-f", "rosapi"], capture_output=True)
             time.sleep(0.5)
             # Force kill anything remaining
             subprocess.run(["pkill", "-9", "-f", "rosbridge_websocket"], capture_output=True)
+            subprocess.run(["pkill", "-9", "-f", "rosapi"], capture_output=True)
         except Exception:
             pass  # Ignore errors during cleanup
         
+        # Disable robot if it was enabled
+        if hasattr(self, 'piper') and hasattr(self, '_PiperRosNode__enable_flag') and self.__enable_flag:
+            self.get_logger().info("Disabling robot arm...")
+            try:
+                self.piper.DisableArm(7)
+                if self.gripper_exist:
+                    self.piper.GripperCtrl(0, 1000, 0x00, 0)
+            except Exception as e:
+                self.get_logger().debug(f"Error disabling arm: {e}")
+        
+        self.get_logger().info("Clean shutdown completed")
         super().destroy_node()
 
 

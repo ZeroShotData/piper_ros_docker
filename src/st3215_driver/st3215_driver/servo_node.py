@@ -84,7 +84,7 @@ class ST3215Driver(Node):
             Int32, 'servo/position_raw', 10)
         self.js_pub   = self.create_publisher(
             JointState, 'joint_states', 10)
-        self.timer = self.create_timer(0.05, self.read_and_publish)   # 20 Hz
+        self.timer = self.create_timer(0.025, self.read_and_publish)   # 40 Hz
 
         self.torque_srv = self.create_service(
             SetBool, 'servo/torque_enable', self.torque_cb)
